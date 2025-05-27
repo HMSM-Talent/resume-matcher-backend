@@ -144,11 +144,15 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # CORS settings
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = True  # For development only - change in production
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8000",
     "http://127.0.0.1:8000",
+    "http://localhost:3000",    # React default port
+    "http://127.0.0.1:3000",    # React default port
+    "http://localhost:5173",    # Vite default port
+    "http://127.0.0.1:5173",    # Vite default port
 ]
 CORS_ALLOWED_METHODS = [
     'DELETE',
