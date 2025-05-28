@@ -1,8 +1,31 @@
 import pdfplumber
 import docx
 import logging
+from sentence_transformers import SentenceTransformer
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Initialize the model
+model = SentenceTransformer('all-MiniLM-L6-v2')
+
+def calculate_similarity(text1, text2):
+    """
+    Calculate semantic similarity between two texts using sentence transformers.
+    Returns a score between 0 and 1, where 1 means most similar.
+    """
+    try:
+        # Encode the texts
+        embedding1 = model.encode(text1)
+        embedding2 = model.encode(text2)
+        
+        # Calculate cosine similarity
+        similarity = np.dot(embedding1, embedding2) / (np.linalg.norm(embedding1) * np.linalg.norm(embedding2))
+        
+        return float(similarity)
+    except Exception as e:
+        logger.error(f"Error calculating similarity: {str(e)}")
+        return 0.0
 
 def extract_text_from_file(file):
     name = file.name.lower()
