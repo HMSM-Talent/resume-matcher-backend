@@ -36,24 +36,24 @@ class JobDescription(models.Model):
     extracted_text = models.TextField(blank=True, null=True)
     
     # Additional metadata fields
-    title = models.CharField(max_length=200)
-    company_name = models.CharField(max_length=200)
-    location = models.CharField(max_length=200)
+    title = models.CharField(max_length=200, null=True, blank=True)
+    company_name = models.CharField(max_length=200, null=True, blank=True)
+    location = models.CharField(max_length=200, null=True, blank=True)
     job_type = models.CharField(max_length=50, choices=[
         ('FULL_TIME', 'Full Time'),
         ('PART_TIME', 'Part Time'),
         ('CONTRACT', 'Contract'),
         ('INTERNSHIP', 'Internship'),
         ('REMOTE', 'Remote')
-    ])
+    ], null=True, blank=True)
     experience_level = models.CharField(max_length=50, choices=[
         ('ENTRY', 'Entry Level'),
         ('MID', 'Mid Level'),
         ('SENIOR', 'Senior Level'),
         ('LEAD', 'Lead Level'),
         ('MANAGER', 'Manager Level')
-    ])
-    required_skills = models.TextField(help_text="Comma-separated list of required skills")
+    ], null=True, blank=True)
+    required_skills = models.TextField(help_text="Comma-separated list of required skills", null=True, blank=True)
     is_active = models.BooleanField(default=True)
 
     def __str__(self):
