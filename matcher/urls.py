@@ -1,6 +1,6 @@
 from django.urls import path
-from .views import match_resumes_to_jd
+from .views import SimilarityView
 
 urlpatterns = [
-    path('match/', match_resumes_to_jd, name='match-resumes'),
+    path('similarity/', SimilarityView.as_view(), name='similarity'),
 ]

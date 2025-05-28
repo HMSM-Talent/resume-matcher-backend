@@ -97,15 +97,16 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'resume_matcher_dev',
-        'USER': 'sakar',
-        'PASSWORD': 'sakar68342',
+        'NAME': 'resume_matcher',
+        'USER': 'Terobau69',
+        'PASSWORD': '',  
         'HOST': 'localhost',
         'PORT': '5432',
     }
 }
 
-AUTH_USER_MODEL = 'resumes.CustomUser'
+# Custom User Model
+AUTH_USER_MODEL = 'accounts.CustomUser'
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -147,9 +148,6 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# Add this at the end of the file
-AUTH_USER_MODEL = 'accounts.CustomUser'
 
 # JWT Settings
 SIMPLE_JWT = {

@@ -1,17 +1,24 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from .serializers import SimilarityRequestSerializer
+from matcher.utils import extract_text_from_file
 
-@api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def match_resumes_to_jd(request):
-    user = request.user  # This gives you the currently authenticated user
+# Load model once globally
+model = SentenceTransformer('all-mpnet-base-v2')
 
-    return Response({
-        "message": "Resume–JD similarity logic will be implemented later.",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "user_type": user.user_type,
-        }
-    })
+class SimilarityView(APIView):
+    def post(self, request):
+        serializer = SimilarityRequestSerializer(data=request.data)
+        if serializer.is_valid():
+            resume_text = serializer.validated_data['resume_text']
+            jd_text = serializer.validated_data['job_description_text']
+
+            # Encode text
+            embeddings = model.encode([resume_text, jd_text])
+            sim_score = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
+
+            return Response({"similarity_score": round(float(sim_score), 4)}, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
