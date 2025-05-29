@@ -9,17 +9,21 @@ from matcher.utils import extract_text_from_file, calculate_similarity
 from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 
+class IsCandidateOrAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and (request.user.is_candidate or request.user.is_admin)
+
+class IsCompanyOrAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return request.user.is_authenticated and (request.user.is_company or request.user.is_admin)
+
 class ResumeUploadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCandidateOrAdmin]
 
     def post(self, request):
-        # Allow both candidates and admins to upload resumes
-        if request.user.role not in ['candidate', 'admin']:
-            return Response({"detail": "Only candidates and admins can upload resumes."}, status=403)
-
-        serializer = ResumeSerializer(data=request.data)
+        serializer = ResumeSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            resume = serializer.save(user=request.user)
+            resume = serializer.save()
 
             resume_file = resume.file
             try:
@@ -52,16 +56,12 @@ class ResumeUploadView(APIView):
         return Response(serializer.errors, status=400)
 
 class JobDescriptionUploadView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCompanyOrAdmin]
 
     def post(self, request):
-        # Allow both companies and admins to upload job descriptions
-        if request.user.role not in ['company', 'admin']:
-            return Response({"detail": "Only companies and admins can upload job descriptions."}, status=403)
-
-        serializer = JobDescriptionSerializer(data=request.data)
+        serializer = JobDescriptionSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
-            jd = serializer.save(user=request.user)
+            jd = serializer.save()
 
             jd_file = jd.file
             try:
@@ -110,11 +110,11 @@ class SimilarityScoreListView(generics.ListAPIView):
             'resume', 'job_description'
         ).filter(job_description__is_active=True)
 
-        if user.role == 'admin':
+        if user.is_admin:
             return queryset
-        elif user.role == 'candidate':
+        elif user.is_candidate:
             return queryset.filter(resume__user=user)
-        elif user.role == 'company':
+        elif user.is_company:
             return queryset.filter(job_description__user=user)
         return SimilarityScore.objects.none()
 
