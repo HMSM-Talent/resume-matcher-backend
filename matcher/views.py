@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from .serializers import SimilarityRequestSerializer
 from matcher.utils import calculate_similarity, get_match_category
+
 import logging
 
 logger = logging.getLogger(__name__)
