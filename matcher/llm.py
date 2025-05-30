@@ -56,21 +56,21 @@ def get_similarity_score_from_llm(resume_text: str, jd_text: str) -> float:
     Returns a float between 0.0 and 1.0. Output should only be a number.
     """
     prompt = f"""
-You are an assistant that evaluates how well a resume matches a job description.
-Give a single number between 0 and 1:
-- 1 = perfect match
-- 0 = no match
+    You are an assistant that evaluates how well a resume matches a job description.
+    Give a single number between 0 and 1:
+    - 1 = perfect match
+    - 0 = no match
 
-Don't explain. Just give the number.
+    Don't explain. Just give the number.
 
-Resume:
-{resume_text}
+    Resume:
+    {resume_text}
 
-Job Description:
-{jd_text}
+    Job Description:
+    {jd_text}
 
-Score:
-"""
+    Score:
+    """
 
     try:
         response = llm(prompt, max_tokens=5, echo=False)
