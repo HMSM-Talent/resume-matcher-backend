@@ -31,12 +31,15 @@ class BaseUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = None
     model_class = None
-    user_role_check = None  # 'candidate' or 'company'
+
+    def get_user_role_check(self):
+        raise NotImplementedError("Subclasses must implement get_user_role_check()")
 
     def get_opposite_queryset(self):
-        if self.user_role_check == 'candidate':
+        role = self.get_user_role_check()
+        if role == 'candidate':
             return JobDescription.objects.filter(extracted_text__isnull=False, is_active=True)
-        elif self.user_role_check == 'company':
+        elif role == 'company':
             return Resume.objects.filter(extracted_text__isnull=False)
         return []
 
@@ -52,21 +55,28 @@ class BaseUploadView(APIView):
             instance.extracted_text = extracted_text
             instance.save()
 
-            for other in self.get_opposite_queryset():
-                score, _ = calculate_similarity(extracted_text, other.extracted_text)
+            opposite_queryset = self.get_opposite_queryset()
+            print(f"[DEBUG] Found {opposite_queryset.count()} opposite documents for scoring.")
 
-                if self.user_role_check == 'candidate':
+            for other in opposite_queryset:
+                print(f"[DEBUG] Comparing to object ID={other.id}")
+                score, _ = calculate_similarity(extracted_text, other.extracted_text)
+                print(f"[DEBUG] Score calculated: {score}")
+
+                if self.get_user_role_check() == 'candidate':
                     SimilarityScore.objects.update_or_create(
                         resume=instance,
                         job_description=other,
                         defaults={'score': score}
                     )
+                    print(f"[DEBUG] Score saved (resume={instance.id}, job_description={other.id})")
                 else:
                     SimilarityScore.objects.update_or_create(
                         resume=other,
                         job_description=instance,
                         defaults={'score': score}
                     )
+                    print(f"[DEBUG] Score saved (resume={other.id}, job_description={instance.id})")
 
             return Response({
                 "message": f"{self.model_class.__name__} uploaded and processed successfully.",
@@ -74,6 +84,7 @@ class BaseUploadView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            print(f"[ERROR] Exception during upload: {e}")
             instance.delete()
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -83,14 +94,18 @@ class ResumeUploadView(BaseUploadView):
     permission_classes = [IsCandidateOrAdmin]
     serializer_class = ResumeSerializer
     model_class = Resume
-    user_role_check = 'candidate'
+
+    def get_user_role_check(self):
+        return 'candidate'
 
 
 class JobDescriptionUploadView(BaseUploadView):
     permission_classes = [IsCompanyOrAdmin]
     serializer_class = JobDescriptionSerializer
     model_class = JobDescription
-    user_role_check = 'company'
+
+    def get_user_role_check(self):
+        return 'company'
 
 
 # ──────── Score List View ────────
@@ -110,17 +125,16 @@ class SimilarityScoreListView(generics.ListAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        qs = SimilarityScore.objects.select_related('resume', 'job_description').filter(
-            job_description__is_active=True
-        )
+        qs = SimilarityScore.objects.select_related('resume', 'job_description')#.filter(
+            #job_description__is_active=True)
 
         if user.is_admin:
             return qs
         elif user.is_candidate:
             return qs.filter(resume__user=user)
         elif user.is_company:
-            return qs.filter(job_description__user=user)
-
+            return qs.filter(job_description__user=user
+)
         return SimilarityScore.objects.none()
 
     def list(self, request, *args, **kwargs):
