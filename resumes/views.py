@@ -98,6 +98,44 @@ class ResumeUploadView(BaseUploadView):
     def get_user_role_check(self):
         return 'candidate'
 
+    def post(self, request):
+        existing_resume = Resume.objects.filter(user=request.user).first()
+        replaced = False
+
+        if existing_resume:
+            replaced = True
+            existing_resume.delete()  # Delete previous resume and its scores (cascade)
+
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        instance = serializer.save()
+
+        try:
+            extracted_text = extract_text_from_file(instance.file)
+            instance.extracted_text = extracted_text
+            instance.save()
+
+            opposite_queryset = self.get_opposite_queryset()
+            for other in opposite_queryset:
+                score, _ = calculate_similarity(extracted_text, other.extracted_text)
+                SimilarityScore.objects.update_or_create(
+                    resume=instance,
+                    job_description=other,
+                    defaults={'score': score}
+                )
+
+            return Response({
+                "message": f"{self.model_class.__name__} uploaded and processed successfully.",
+                "extracted_text": extracted_text,
+                "replaced": replaced
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            instance.delete()
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 class JobDescriptionUploadView(BaseUploadView):
     permission_classes = [IsCompanyOrAdmin]

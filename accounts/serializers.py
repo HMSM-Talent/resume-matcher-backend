@@ -3,14 +3,33 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.password_validation import validate_password
 from django.core.validators import EmailValidator, RegexValidator
 from .models import CustomUser, CandidateProfile, CompanyProfile
+from resumes.models import Resume
+
 
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
+    resume_id = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ('id', 'email', 'role', 'is_active', 'date_joined', 'first_name', 'last_name')
+        fields = (
+            'id',
+            'email',
+            'role',
+            'is_active',
+            'date_joined',
+            'first_name',
+            'last_name',
+            'resume_id',  
+        )
         read_only_fields = ('id', 'date_joined')
+
+    def get_resume_id(self, obj):
+        if obj.role == User.Role.CANDIDATE:
+            resume = Resume.objects.filter(user=obj).first()
+            return resume.id if resume else None
+        return None
 
 class CandidateProfileSerializer(serializers.ModelSerializer):
     phone_number = serializers.CharField(
