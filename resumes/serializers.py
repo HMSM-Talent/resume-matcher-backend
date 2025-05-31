@@ -29,6 +29,9 @@ class ResumeSerializer(serializers.ModelSerializer):
 
 
 class JobDescriptionSerializer(serializers.ModelSerializer):
+    job_type = serializers.CharField(required=False)
+    experience_level = serializers.CharField(required=False)
+
     class Meta:
         model = JobDescription
         fields = [
@@ -43,6 +46,59 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
         if ext.lower() != '.pdf':
             raise serializers.ValidationError("Only PDF files are allowed.")
         return file
+
+    def validate_job_type(self, value):
+        if not value:
+            return value
+            
+        # Convert to uppercase and replace hyphen with underscore
+        value = value.upper().replace('-', '_')
+        
+        # Map common variations
+        job_type_mapping = {
+            'FULLTIME': 'FULL_TIME',
+            'PARTTIME': 'PART_TIME',
+            'FULL_TIME': 'FULL_TIME',
+            'PART_TIME': 'PART_TIME',
+            'CONTRACT': 'CONTRACT',
+            'INTERNSHIP': 'INTERNSHIP',
+            'REMOTE': 'REMOTE'
+        }
+        
+        mapped_value = job_type_mapping.get(value)
+        if not mapped_value:
+            raise serializers.ValidationError(
+                f"Invalid job type. Must be one of: {', '.join(job_type_mapping.values())}"
+            )
+        return mapped_value
+
+    def validate_experience_level(self, value):
+        if not value:
+            return value
+            
+        # Convert to uppercase
+        value = value.upper()
+        
+        # Map common variations
+        level_mapping = {
+            'ENTRY': 'ENTRY',
+            'MID': 'MID',
+            'SENIOR': 'SENIOR',
+            'LEAD': 'LEAD',
+            'MANAGER': 'MANAGER',
+            'JUNIOR': 'ENTRY',
+            'MID_LEVEL': 'MID',
+            'SENIOR_LEVEL': 'SENIOR',
+            'LEAD_LEVEL': 'LEAD',
+            'MANAGER_LEVEL': 'MANAGER'
+        }
+        
+        mapped_value = level_mapping.get(value)
+        if not mapped_value:
+            raise serializers.ValidationError(
+                f"Invalid experience level. Must be one of: {', '.join(level_mapping.values())}"
+            )
+        return mapped_value
 
     def validate(self, attrs):
         request = self.context.get('request')

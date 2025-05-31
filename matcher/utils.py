@@ -1,46 +1,39 @@
 import PyPDF2
 import io
 import logging
-from django.core.cache import cache
-from django.conf import settings
 import re
-from typing import Tuple, Optional
+import hashlib
 import numpy as np
+from typing import Tuple, Optional
+
+from django.core.cache import cache
 from sentence_transformers import SentenceTransformer
-from matcher.llm import get_similarity_score_from_llm
+
+from matcher.llm import get_llm_similarity_score, get_cosine_similarity
 
 logger = logging.getLogger(__name__)
-
-# Initialize the model
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
 def normalize_text(text: str) -> str:
-    """Normalize text by removing extra whitespace, converting to lowercase, and removing punctuation."""
+    """Clean up text for processing."""
     if not text:
         return ""
-    # Convert to lowercase
     text = text.lower()
-    # Remove extra whitespace
     text = re.sub(r'\s+', ' ', text)
-    # Remove punctuation except for periods in abbreviations
     text = re.sub(r'[^\w\s.]', '', text)
     return text.strip()
 
 def extract_text_from_file(file) -> str:
-    """Extract text from PDF file with error handling."""
+    """Extract normalized text from a PDF file."""
     try:
         if not file:
             raise ValueError("No file provided")
 
-        # Read the file content
         content = file.read()
         if not content:
             raise ValueError("Empty file")
 
-        # Create a PDF reader object
         pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-        
-        # Extract text from all pages
         text = ""
         for page in pdf_reader.pages:
             page_text = page.extract_text()
@@ -56,53 +49,62 @@ def extract_text_from_file(file) -> str:
         logger.error(f"PDF reading error: {str(e)}")
         raise ValueError("Invalid PDF file format")
     except Exception as e:
-        logger.error(f"Error extracting text from file: {str(e)}")
+        logger.error(f"File processing error: {str(e)}")
         raise ValueError(f"Error processing file: {str(e)}")
 
-def get_cached_embedding(text: str, cache_key: str) -> Optional[np.ndarray]:
-    """Get cached embedding or compute and cache new one."""
-    # Try to get from cache
-    cached_embedding = cache.get(cache_key)
-    if cached_embedding is not None:
-        return np.array(cached_embedding)
-    
-    # Compute new embedding
+def hash_text_for_cache(text: str) -> str:
+    """Create a unique cache key using SHA256 hashing."""
+    return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+def get_cached_embedding(text: str) -> Optional[np.ndarray]:
+    """Get or compute and cache the sentence embedding."""
+    key = f"embedding_{hash_text_for_cache(text)}"
+    cached = cache.get(key)
+    if cached is not None:
+        return np.array(cached)
+
     try:
         embedding = model.encode([text])[0]
-        # Cache for 24 hours
-        cache.set(cache_key, embedding.tolist(), 60 * 60 * 24)
+        cache.set(key, embedding.tolist(), 60 * 60 * 24)
         return embedding
     except Exception as e:
-        logger.error(f"Error computing embedding: {str(e)}")
-        raise ValueError(f"Error computing text embedding: {str(e)}")
-
-from matcher.llm import get_similarity_score_from_llm
+        logger.error(f"Embedding error: {str(e)}")
+        raise ValueError("Error generating embedding")
 
 def calculate_similarity(resume_text: str, jd_text: str) -> Tuple[float, dict]:
-    """
-    Calculate similarity score between resume and job description using LLM (Phi-2).
-    Returns a tuple of score and analysis dictionary.
-    """
+    """Hybrid similarity score using both cosine similarity and LLM semantic analysis."""
     try:
         if not resume_text or not jd_text:
             raise ValueError("Empty resume or job description text")
 
-        score = get_similarity_score_from_llm(resume_text, jd_text)
+        # Get cosine similarity using MiniLM
+        cosine_score = get_cosine_similarity(resume_text, jd_text)
+        logger.info(f"Cosine similarity score: {cosine_score}")
+
+        # Get semantic similarity using LLM
+        llm_score = get_llm_similarity_score(resume_text, jd_text)
+        logger.info(f"LLM semantic score: {llm_score}")
+
+        # Calculate final hybrid score with adjusted weights
+        # Give more weight to LLM for semantic understanding
+        final_score = round((0.3 * cosine_score + 0.7 * llm_score), 2)
 
         analysis = {
             "resume_length": len(resume_text.split()),
             "jd_length": len(jd_text.split()),
-            "llm_score": score
+            "cosine_score": cosine_score,
+            "llm_score": llm_score,
+            "hybrid_score": final_score
         }
 
-        return score, analysis
+        logger.info(f"Final hybrid similarity score: {final_score}")
+        return final_score, analysis
 
     except Exception as e:
-        logger.error(f"LLM-based similarity scoring failed: {str(e)}")
-        raise ValueError(f"Error calculating LLM similarity: {str(e)}")
-    
+        logger.error(f"Similarity scoring failed: {str(e)}", exc_info=True)
+        raise ValueError(f"Similarity scoring failed: {str(e)}")
+
 def get_match_category(score: float) -> str:
-    """Get match category based on similarity score."""
     if score >= 0.8:
         return "Excellent Match"
     elif score >= 0.6:

@@ -1,21 +1,109 @@
 import json
-from llama_cpp import Llama
+import requests
+import logging
+import re
+import time
+from sentence_transformers import SentenceTransformer, util
 
-# Path to your Phi-2 model (update if yours is different)
-LLM_MODEL_PATH = "/Users/Terobau69/.lmstudio/models/TheBloke/phi-2-GGUF/phi-2.Q4_K_M.gguf"
+logger = logging.getLogger(__name__)
 
-# Initialize the model only once
-llm = Llama(
-    model_path=LLM_MODEL_PATH,
-    n_ctx=2048,
-    n_threads=4,  # Tune this depending on your CPU cores
-    verbose=False
-)
+# Initialize the embedding model
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# Local LLM server URL
+LLM_SERVER_URL = "http://127.0.0.1:1234/v1/chat/completions"
+
+def get_cosine_similarity(resume_text: str, jd_text: str) -> float:
+    """
+    Calculate cosine similarity between resume and job description using MiniLM.
+    Returns a float between 0.0 and 1.0.
+    """
+    try:
+        # Encode texts to embeddings
+        resume_embedding = embedding_model.encode(resume_text, convert_to_tensor=True)
+        jd_embedding = embedding_model.encode(jd_text, convert_to_tensor=True)
+
+        # Calculate cosine similarity
+        similarity = util.cos_sim(resume_embedding, jd_embedding).item()
+        similarity = round(max(0.0, min(similarity, 1.0)), 4)  # Clamp within range
+
+        logger.info(f"MiniLM cosine similarity: {similarity}")
+        return similarity
+    except Exception as e:
+        logger.error(f"Error calculating cosine similarity: {e}", exc_info=True)
+        return 0.0
+
+def post_with_retries(payload, retries=3, delay=2):
+    """Retry LLM request if it fails due to timeout or network errors."""
+    for attempt in range(retries):
+        try:
+            response = requests.post(LLM_SERVER_URL, json=payload, timeout=10)
+            response.raise_for_status()
+            return response
+        except Exception as e:
+            logger.warning(f"[Retry {attempt + 1}] LLM request failed: {e}")
+            time.sleep(delay)
+    raise RuntimeError("LLM request failed after all retries.")
+
+def get_llm_similarity_score(resume_text: str, jd_text: str) -> float:
+    """
+    Uses local Phi-2 server to calculate semantic similarity between a resume and a job description.
+    Returns a float between 0.0 and 1.0.
+    """
+    logger.info("Starting LLM similarity score calculation...")
+    logger.debug(f"Resume text length: {len(resume_text)}, JD text length: {len(jd_text)}")
+
+    prompt = f"""
+You are a strict scoring assistant.
+
+Instructions:
+- Evaluate how well the resume matches the job description.
+- Consider:
+  * Required skills match
+  * Experience level match
+  * Job responsibilities alignment
+  * Industry/domain relevance
+- Respond with only a decimal number between 0.0 and 1.0 (e.g., 0.75).
+- Do not include any explanation or symbols. Just the number.
+
+Resume:
+{resume_text}
+
+Job Description:
+{jd_text}
+
+Score (decimal number only):
+""".strip()
+
+    try:
+        logger.debug("Sending prompt to LLM server...")
+        response = post_with_retries({
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 5
+        })
+
+        score_text = response.json()["choices"][0]["message"]["content"].strip()
+        logger.debug(f"Raw LLM output: {score_text}")
+
+        match = re.search(r"\b([01](?:\.\d+)?|0?\.\d+)\b", score_text)
+        if not match:
+            logger.warning(f"No valid score found in LLM output: '{score_text}'")
+            return 0.0
+
+        score = float(match.group(1))
+        final_score = max(0.0, min(score, 1.0))  # Clamp value within range
+        logger.info(f"Final LLM similarity score: {final_score}")
+        return final_score
+
+    except Exception as e:
+        logger.error(f"LLM similarity scoring failed: {e}", exc_info=True)
+        return 0.0
 
 def extract_job_metadata(text: str) -> dict:
     """
-    Uses Phi-2 LLM to extract structured metadata from raw job description text.
-    Returns a dict with standard keys used in JobDescription model.
+    Extracts structured metadata from raw job description using local Phi-2 server.
+    Returns a dictionary with Job Title, Company Name, etc.
     """
     prompt = f"""
     Extract job posting details from the following text and return as valid JSON with these keys:
@@ -30,15 +118,25 @@ def extract_job_metadata(text: str) -> dict:
     {text}
 
     Output:
-    """
-    
-    response = llm(prompt, max_tokens=512, stop=["}"], echo=False)
+    """.strip()
 
     try:
-        raw_output = response["choices"][0]["text"].strip()
-        json_output = json.loads(raw_output + "}")  # Fix missing brace if needed
-    except Exception:
-        # Fallback in case LLM fails
+        logger.debug("Sending job metadata prompt to LLM server...")
+        response = post_with_retries({
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.1,
+            "max_tokens": 512
+        })
+
+        raw_output = response.json()["choices"][0]["message"]["content"].strip()
+        logger.debug(f"Raw LLM metadata output: {raw_output}")
+
+        # Try to decode JSON from the response
+        json_output = json.loads(raw_output)
+        return json_output
+
+    except Exception as e:
+        logger.error(f"Error extracting job metadata: {e}", exc_info=True)
         return {
             "Job Title": None,
             "Company Name": None,
@@ -47,36 +145,3 @@ def extract_job_metadata(text: str) -> dict:
             "Experience Level": None,
             "Required Skills": []
         }
-
-    return json_output
-
-def get_similarity_score_from_llm(resume_text: str, jd_text: str) -> float:
-    """
-    Uses Phi-2 LLM to calculate a similarity score between resume and job description.
-    Returns a float between 0.0 and 1.0. Output should only be a number.
-    """
-    prompt = f"""
-    You are an assistant that evaluates how well a resume matches a job description.
-    Give a single number between 0 and 1:
-    - 1 = perfect match
-    - 0 = no match
-
-    Don't explain. Just give the number.
-
-    Resume:
-    {resume_text}
-
-    Job Description:
-    {jd_text}
-
-    Score:
-    """
-
-    try:
-        response = llm(prompt, max_tokens=5, echo=False)
-        score_text = response["choices"][0]["text"].strip()
-        score = float(score_text)
-        return max(0.0, min(score, 1.0))  # Clamp score safely
-    except Exception as e:
-        print(f"Phi-2 similarity scoring failed: {e}")
-        return 0.0
