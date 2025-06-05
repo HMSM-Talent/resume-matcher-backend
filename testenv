@@ -1,0 +1,5 @@
+DEBUG=True
+SECRET_KEY=your-secret
+DATABASE_URL=postgres://postgres:Admin@123@localhost:5432/resume_matcher
+LLM_API_URL=http://localhost:1234/v1
+LLM_API_KEY=your-api-key

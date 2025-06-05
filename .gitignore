@@ -59,3 +59,4 @@ htmlcov/
 .pytest_cache/
 .tox/
 .env
+*.pyc
