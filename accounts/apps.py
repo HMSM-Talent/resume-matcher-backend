@@ -6,5 +6,4 @@ class AccountsConfig(AppConfig):
     name = 'accounts'
 
     def ready(self):
-        import accounts.history  # Import the history model
         import accounts.signals  # Import the signals

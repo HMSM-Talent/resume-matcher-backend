@@ -12,10 +12,8 @@ from .serializers import (
     CompanyRegistrationSerializer,
     CandidateProfileSerializer,
     CompanyProfileSerializer,
-    UserHistorySerializer
+
 )
-from .history import UserHistory
-from .utils import record_user_activity
 
 User = get_user_model()
 
@@ -78,26 +76,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             response.data['user'] = UserSerializer(user).data
         return response
 
-class UserHistoryViewSet(viewsets.ReadOnlyModelViewSet):
-    serializer_class = UserHistorySerializer
-    permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
-        user = self.request.user
-        if user.is_admin:
-            return UserHistory.objects.all()
-        return UserHistory.objects.filter(user=user)
-
-    @action(detail=False, methods=['get'])
-    def my_history(self, request):
-        """Get the current user's history"""
-        history = UserHistory.objects.filter(user=request.user)
-        serializer = self.get_serializer(history, many=True)
-        return Response(serializer.data)
-
-    @action(detail=False, methods=['get'])
-    def recent_activity(self, request):
-        """Get recent activity for the current user"""
-        history = UserHistory.objects.filter(user=request.user).order_by('-created_at')[:10]
-        serializer = self.get_serializer(history, many=True)
-        return Response(serializer.data)
+            
+    

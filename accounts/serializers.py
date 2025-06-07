@@ -4,7 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.validators import EmailValidator, RegexValidator
 from .models import CustomUser, CandidateProfile, CompanyProfile
 from resumes.models import Resume
-from .history import UserHistory
+
 
 
 User = get_user_model()
@@ -120,12 +120,5 @@ class CompanyRegistrationSerializer(BaseRegistrationSerializer):
         CompanyProfile.objects.create(user=user, **profile_data)
         return user
 
-class UserHistorySerializer(serializers.ModelSerializer):
-    action_type_display = serializers.CharField(source='get_action_type_display', read_only=True)
-    user_email = serializers.EmailField(source='user.email', read_only=True)
 
-    class Meta:
-        model = UserHistory
-        fields = ['id', 'user_email', 'action_type', 'action_type_display', 
-                 'description', 'ip_address', 'created_at', 'metadata']
-        read_only_fields = ['created_at']
+    

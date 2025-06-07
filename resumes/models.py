@@ -1,6 +1,6 @@
 import os
 from datetime import datetime
-import magic  # For MIME type detection
+# import magic  # For MIME type detection
 from django.db import models
 from django.conf import settings
 from django.core.exceptions import ValidationError
