@@ -8,6 +8,7 @@ from typing import Tuple, Optional
 
 from django.core.cache import cache
 from sentence_transformers import SentenceTransformer
+from resumes.utils import extract_text_from_file, normalize_text
 
 from matcher.llm import get_llm_similarity_score, get_cosine_similarity
 
@@ -22,35 +23,6 @@ def normalize_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)
     text = re.sub(r'[^\w\s.]', '', text)
     return text.strip()
-
-def extract_text_from_file(file) -> str:
-    """Extract normalized text from a PDF file."""
-    try:
-        if not file:
-            raise ValueError("No file provided")
-
-        content = file.read()
-        if not content:
-            raise ValueError("Empty file")
-
-        pdf_reader = PyPDF2.PdfReader(io.BytesIO(content))
-        text = ""
-        for page in pdf_reader.pages:
-            page_text = page.extract_text()
-            if page_text:
-                text += page_text + "\n"
-
-        if not text.strip():
-            raise ValueError("No text content found in PDF")
-
-        return normalize_text(text)
-
-    except PyPDF2.PdfReadError as e:
-        logger.error(f"PDF reading error: {str(e)}")
-        raise ValueError("Invalid PDF file format")
-    except Exception as e:
-        logger.error(f"File processing error: {str(e)}")
-        raise ValueError(f"Error processing file: {str(e)}")
 
 def hash_text_for_cache(text: str) -> str:
     """Create a unique cache key using SHA256 hashing."""

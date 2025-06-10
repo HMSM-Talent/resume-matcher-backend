@@ -4,13 +4,13 @@ djangorestframework-simplejwt==5.3.1
 sentence-transformers==2.2.2
 scikit-learn==1.4.0
 numpy==1.24.3
-torch==2.0.1
-transformers==4.30.2
+torch==2.7.1
+transformers>=4.36.0
 python-dotenv==1.0.0
 gunicorn==21.2.0
 django-cors-headers==4.3.0
 pdfplumber==0.10.3
 python-docx==1.0.1
 psycopg2-binary==2.9.9
-tokenizers==0.13.3
+tokenizers>=0.21.0
 sentencepiece==0.1.99 

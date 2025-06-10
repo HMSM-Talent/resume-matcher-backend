@@ -61,15 +61,15 @@ The server will start at `http://127.0.0.1:8000/`
 - Register: `POST /api/auth/register/`
 
 ### Resume Management
-- Upload Resume: `POST /upload/resume/`
-- View Resumes: `GET /resumes/`
+- Upload Resume: `POST /api/upload/resume/`
+- View Resumes: `GET /api/resumes/`
 
 ### Job Description Management
-- Upload Job Description: `POST /upload/job-description/`
-- View Job Descriptions: `GET /job-descriptions/`
+- Upload Job Description: `POST /api/upload/job-description/`
+- View Job Descriptions: `GET /api/job-descriptions/`
 
 ### Similarity Scores
-- View Matches: `GET /similarity-scores/`
+- View Matches: `GET /api/similarity-scores/`
   - Query Parameters:
     - `limit`: Get top N matches (e.g., `?limit=5`)
     - `job_description__job_type`: Filter by job type

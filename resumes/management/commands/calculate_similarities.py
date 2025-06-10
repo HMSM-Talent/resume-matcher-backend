@@ -1,5 +1,6 @@
 from django.core.management.base import BaseCommand
-from resumes.models import Resume, JobDescription, SimilarityScore
+from resumes.models import Resume, JobDescription
+from matcher.models import SimilarityScore
 from matcher.utils import calculate_similarity
 
 class Command(BaseCommand):
@@ -13,7 +14,7 @@ class Command(BaseCommand):
         
         for resume in resumes:
             for jd in job_descriptions:
-                score = calculate_similarity(resume.extracted_text, jd.extracted_text)
+                score, _ = calculate_similarity(resume.extracted_text, jd.extracted_text)
                 SimilarityScore.objects.update_or_create(
                     resume=resume,
                     job_description=jd,

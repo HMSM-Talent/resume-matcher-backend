@@ -28,6 +28,10 @@ db.sqlite3-journal
 media/
 static/
 
+# Database settings
+backend/settings/database.py
+backend/settings/local.py
+
 # Virtual Environment
 .env
 .venv
@@ -59,3 +63,10 @@ htmlcov/
 .pytest_cache/
 .tox/
 .env
+
+# Compiled Python files
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
