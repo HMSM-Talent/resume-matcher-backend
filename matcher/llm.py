@@ -4,14 +4,15 @@ import logging
 import re
 import time
 from sentence_transformers import SentenceTransformer, util
+import os
 
 logger = logging.getLogger(__name__)
 
 # Initialize the embedding model
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Local LLM server URL
-LLM_SERVER_URL = "http://127.0.0.1:1234/v1/chat/completions"
+# Local LLM server URL, configurable via environment variable
+LLM_SERVER_URL = os.getenv("LLM_SERVER_URL", "http://127.0.0.1:1234/v1/chat/completions")
 
 def get_cosine_similarity(resume_text: str, jd_text: str) -> float:
     """

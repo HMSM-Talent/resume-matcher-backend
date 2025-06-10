@@ -45,6 +45,21 @@ python manage.py migrate
 ```bash
 python manage.py createsuperuser
 ```
+## Environment Variables
+
+- `LLM_SERVER_URL` *(optional)*: URL of the LLM server used for similarity
+  scoring. Defaults to `http://127.0.0.1:1234/v1/chat/completions`.
+
+## Configuration
+
+Set the `MODEL_PATH` environment variable to the location of your Phi-2 GGUF
+model file. If this variable is not set, the application will look for the file
+at `models/phi-2.Q4_K_M.gguf` relative to the project root. If the model cannot
+be found, a clear error will be raised when starting the server.
+
+```bash
+export MODEL_PATH=/path/to/phi-2.Q4_K_M.gguf
+```
 
 ## Running the Server
 

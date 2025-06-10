@@ -44,7 +44,7 @@ def get_cached_embedding(text: str) -> Optional[np.ndarray]:
         raise ValueError("Error generating embedding")
 
 def calculate_similarity(resume_text: str, jd_text: str) -> Tuple[float, dict]:
-    """Hybrid similarity score using both cosine similarity and LLM semantic analysis."""
+    """Calculate similarity score using sentence transformer embeddings."""
     try:
         if not resume_text or not jd_text:
             raise ValueError("Empty resume or job description text")
@@ -58,7 +58,6 @@ def calculate_similarity(resume_text: str, jd_text: str) -> Tuple[float, dict]:
         logger.info(f"LLM semantic score: {llm_score}")
 
         # Calculate final hybrid score with adjusted weights
-        # Give more weight to LLM for semantic understanding
         final_score = round((0.3 * cosine_score + 0.7 * llm_score), 2)
 
         analysis = {
