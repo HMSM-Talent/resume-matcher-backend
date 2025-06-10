@@ -12,5 +12,11 @@ django-cors-headers==4.3.0
 pdfplumber==0.10.3
 python-docx==1.0.1
 psycopg2-binary==2.9.9
+<<<<<<< Updated upstream
 tokenizers==0.13.3
 sentencepiece==0.1.99 
+=======
+tokenizers>=0.21.0
+sentencepiece==0.1.99
+llama-cpp-python==0.3.9
+>>>>>>> Stashed changes

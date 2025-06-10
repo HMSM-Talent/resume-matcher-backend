@@ -2,14 +2,14 @@ from rest_framework import generics, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
 import logging
 
-from .models import Resume, JobDescription
 from matcher.models import SimilarityScore
-from .serializers import ResumeSerializer, JobDescriptionSerializer
-from matcher.serializers import SimilarityScoreSerializer
+from matcher.serializers import JobDescriptionSerializer, SimilarityScoreSerializer
 from matcher.utils import extract_text_from_file, calculate_similarity
+
+from .models import Resume, JobDescription
+from .serializers import ResumeSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +47,8 @@ class BaseUploadView(APIView):
         return []
 
     def post(self, request):
+        if not self.serializer_class:
+            raise NotImplementedError("Subclasses must set serializer_class")
         serializer = self.serializer_class(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -54,19 +56,31 @@ class BaseUploadView(APIView):
         instance = serializer.save()
 
         try:
-            logger.info(f"Processing {self.model_class.__name__} upload for user {request.user.id}")
-            extracted_text = extract_text_from_file(instance.file)
-            instance.extracted_text = extracted_text
-            instance.save()
-            logger.info(f"Text extracted and saved for {self.model_class.__name__} ID {instance.id}")
-
+            logger.info(
+                "Processing %s upload for user %s",
+                self.model_class.__name__,
+                request.user.id
+            )
+            if not instance.extracted_text:
+                extracted_text = extract_text_from_file(instance.file)
+                instance.extracted_text = extracted_text
+                instance.save()
+            else:
+                extracted_text = instance.extracted_text
+            logger.info(
+                "Text extracted and saved for %s ID %s",
+                self.model_class.__name__,
+                instance.id
+            )
             opposite_queryset = self.get_opposite_queryset()
-            logger.info(f"Found {opposite_queryset.count()} opposite documents for scoring")
+            logger.info("Found %d opposite documents for scoring", opposite_queryset.count())
 
             for other in opposite_queryset:
-                logger.debug(f"Calculating similarity between {self.model_class.__name__} {instance.id} and {other.__class__.__name__} {other.id}")
+                logger.debug("Calculating similarity between %s %s and %s %s",
+                    self.model_class.__name__, instance.id,
+                    other.__class__.__name__, other.id)
                 score, _ = calculate_similarity(extracted_text, other.extracted_text)
-                logger.info(f"Similarity score calculated: {score}")
+                logger.info("Similarity score calculated: %s", score)
 
                 if self.get_user_role_check() == 'candidate':
                     SimilarityScore.objects.update_or_create(
@@ -74,22 +88,21 @@ class BaseUploadView(APIView):
                         job_description=other,
                         defaults={'score': score}
                     )
-                    logger.info(f"Score saved: resume={instance.id}, job_description={other.id}, score={score}")
+                    logger.info("Score saved: resume=%s, job_description=%s, score=%s",
+                        instance.id, other.id, score)
                 else:
                     SimilarityScore.objects.update_or_create(
                         resume=other,
                         job_description=instance,
                         defaults={'score': score}
                     )
-                    logger.info(f"Score saved: resume={other.id}, job_description={instance.id}, score={score}")
+                    logger.info("Score saved: resume=%s, job_description=%s, score=%s",
+                        other.id, instance.id, score)
 
-            return Response({
-                "message": f"{self.model_class.__name__} uploaded and processed successfully.",
-                "extracted_text": extracted_text
-            }, status=status.HTTP_201_CREATED)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        except Exception as e:
-            logger.error(f"Exception during upload: {e}", exc_info=True)
+        except (ValueError, IOError, OSError) as e:
+            logger.error("Exception during upload: %s", e, exc_info=True)
             instance.delete()
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -111,7 +124,7 @@ class ResumeUploadView(BaseUploadView):
             replaced = True
             existing_resume.delete()  # Delete previous resume and its scores (cascade)
 
-        serializer = self.serializer_class(data=request.data, context={'request': request})
+        serializer = ResumeSerializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
