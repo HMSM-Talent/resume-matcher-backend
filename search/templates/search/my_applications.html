@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <h1 class="mb-4">My Applications</h1>
+
+    {% if applications %}
+        <div class="row">
+            {% for application in applications %}
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">{{ application.job_listing.job_description.title }}</h5>
+                            <h6 class="card-subtitle mb-2 text-muted">
+                                {{ application.job_listing.company.company_name }}
+                            </h6>
+                            
+                            <div class="mb-3">
+                                <span class="badge {% if application.status == 'pending' %}bg-warning
+                                                  {% elif application.status == 'reviewed' %}bg-info
+                                                  {% elif application.status == 'shortlisted' %}bg-success
+                                                  {% else %}bg-danger{% endif %}">
+                                    {{ application.status|title }}
+                                </span>
+                            </div>
+
+                            <p class="card-text">
+                                Applied {{ application.applied_at|timesince }} ago
+                            </p>
+                            
+                            <a href="{% url 'job_detail' application.job_listing.id %}" 
+                               class="btn btn-outline-primary">
+                                View Job Details
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="alert alert-info">
+            You haven't applied for any jobs yet. 
+            <a href="{% url 'job_search' %}" class="alert-link">Browse available jobs</a>
+        </div>
+    {% endif %}
+
+    <!-- Back to Search -->
+    <div class="mt-4">
+        <a href="{% url 'job_search' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Job Search
+        </a>
+    </div>
+</div>
+{% endblock %} 

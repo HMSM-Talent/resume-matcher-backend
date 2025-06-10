@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     'accounts',
     'resumes',
     'matcher',
+    'search',
 ]
 
 REST_FRAMEWORK = {

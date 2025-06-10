@@ -7,6 +7,7 @@ import logging
 
 from .models import Resume, JobDescription
 from matcher.models import SimilarityScore
+from search.models import JobListing
 from .serializers import ResumeSerializer, JobDescriptionSerializer
 from matcher.serializers import SimilarityScoreSerializer
 from matcher.utils import extract_text_from_file, calculate_similarity
@@ -155,7 +156,25 @@ class JobDescriptionUploadView(BaseUploadView):
         if 'is_active' not in request.data:
             request.data['is_active'] = True
             
-        return super().post(request)
+        # Call parent's post method to handle the upload
+        response = super().post(request)
+        
+        # If upload was successful (201 Created), create a JobListing
+        if response.status_code == status.HTTP_201_CREATED:
+            try:
+                job_description = JobDescription.objects.get(id=response.data['id'])
+                # Create a JobListing for this job description
+                JobListing.objects.create(
+                    job_description=job_description,
+                    company=request.user,
+                    is_active=True
+                )
+                logger.info(f"Created JobListing for JobDescription {job_description.id}")
+            except Exception as e:
+                logger.error(f"Failed to create JobListing: {str(e)}")
+                # Don't return error to client since the upload was successful
+                
+        return response
 
 
 # ──────── Score List View ────────

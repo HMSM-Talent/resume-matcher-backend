@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="card">
+        <div class="card-body">
+            <h1 class="card-title">{{ job_listing.job_description.title }}</h1>
+            <h4 class="card-subtitle mb-3 text-muted">{{ job_listing.company.company_name }}</h4>
+            
+            <div class="mb-4">
+                <h5>Job Description</h5>
+                <p class="card-text">{{ job_listing.job_description.description|linebreaks }}</p>
+            </div>
+
+            {% if job_listing.job_description.requirements %}
+            <div class="mb-4">
+                <h5>Requirements</h5>
+                <p class="card-text">{{ job_listing.job_description.requirements|linebreaks }}</p>
+            </div>
+            {% endif %}
+
+            {% if job_listing.job_description.skills %}
+            <div class="mb-4">
+                <h5>Required Skills</h5>
+                <p class="card-text">{{ job_listing.job_description.skills|linebreaks }}</p>
+            </div>
+            {% endif %}
+
+            <div class="d-flex justify-content-between align-items-center">
+                <div class="text-muted">
+                    Posted {{ job_listing.created_at|timesince }} ago
+                </div>
+                
+                {% if user.is_authenticated %}
+                    {% if user.is_candidate %}
+                        {% if has_applied %}
+                            <button class="btn btn-secondary" disabled>Already Applied</button>
+                        {% else %}
+                            <form method="post" action="{% url 'apply_job' job_listing.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-primary">Apply Now</button>
+                            </form>
+                        {% endif %}
+                    {% else %}
+                        <div class="alert alert-info">
+                            Please log in as a candidate to apply for this job.
+                        </div>
+                    {% endif %}
+                {% else %}
+                    <a href="{% url 'login' %}?next={{ request.path }}" class="btn btn-primary">Login to Apply</a>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Back to Search -->
+    <div class="mt-4">
+        <a href="{% url 'job_search' %}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left"></i> Back to Job Search
+        </a>
+    </div>
+</div>
+{% endblock %} 
