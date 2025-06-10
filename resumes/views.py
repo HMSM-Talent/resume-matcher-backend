@@ -155,7 +155,49 @@ class JobDescriptionUploadView(BaseUploadView):
         if 'is_active' not in request.data:
             request.data['is_active'] = True
             
-        return super().post(request)
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        instance = serializer.save()
+
+        try:
+            logger.info(f"Processing {self.model_class.__name__} upload for user {request.user.id}")
+            extracted_text = extract_text_from_file(instance.file)
+            instance.extracted_text = extracted_text
+            instance.save()
+            logger.info(f"Text extracted and saved for {self.model_class.__name__} ID {instance.id}")
+
+            opposite_queryset = self.get_opposite_queryset()
+            logger.info(f"Found {opposite_queryset.count()} opposite documents for scoring")
+
+            for other in opposite_queryset:
+                logger.debug(f"Calculating similarity between {self.model_class.__name__} {instance.id} and {other.__class__.__name__} {other.id}")
+                score, _ = calculate_similarity(extracted_text, other.extracted_text)
+                logger.info(f"Similarity score calculated: {score}")
+
+                SimilarityScore.objects.update_or_create(
+                    resume=other,
+                    job_description=instance,
+                    defaults={'score': score}
+                )
+                logger.info(f"Score saved: resume={other.id}, job_description={instance.id}, score={score}")
+
+            return Response({
+                "message": f"{self.model_class.__name__} uploaded and processed successfully.",
+                "extracted_text": extracted_text,
+                "title": instance.title,
+                "company_name": instance.company_name,
+                "location": instance.location,
+                "job_type": instance.job_type,
+                "experience_level": instance.experience_level,
+                "file_url": request.build_absolute_uri(instance.file.url) if instance.file else None
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            logger.error(f"Exception during upload: {e}", exc_info=True)
+            instance.delete()
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ──────── Score List View ────────
