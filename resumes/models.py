@@ -106,6 +106,8 @@ class JobDescription(models.Model):
         help_text="Comma-separated list of required skills", null=True, blank=True
     )
     is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def clean(self):
         if not self.user.is_company:

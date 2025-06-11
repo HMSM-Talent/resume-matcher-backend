@@ -47,7 +47,7 @@ class BaseUploadView(APIView):
         return []
 
     def post(self, request):
-        serializer = self.serializer_class(data=request.data, context={'request': request})
+        serializer = self.get_serializer(data=request.data, context={'request': request})
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -308,3 +308,38 @@ class DebugView(APIView):
                 } for s in user_scores[:5]
             ]
         })
+
+class JobDescriptionView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, id):
+        try:
+            job_description = JobDescription.objects.get(id=id)
+            # Check if user has permission to view this job description
+            if not (request.user.is_admin or 
+                   request.user.is_company and job_description.user == request.user or
+                   request.user.is_candidate and job_description.is_active):
+                return Response(
+                    {'error': 'You do not have permission to view this job description'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            data = {
+                'id': job_description.id,
+                'title': job_description.title,
+                'company_name': job_description.company_name,
+                'location': job_description.location,
+                'job_type': job_description.job_type,
+                'experience_level': job_description.experience_level,
+                'required_skills': job_description.required_skills,
+                'file_url': request.build_absolute_uri(job_description.file.url) if job_description.file else None,
+                'is_active': job_description.is_active,
+                'created_at': job_description.created_at,
+                'updated_at': job_description.updated_at
+            }
+            return Response(data)
+        except JobDescription.DoesNotExist:
+            return Response(
+                {'error': 'Job description not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
