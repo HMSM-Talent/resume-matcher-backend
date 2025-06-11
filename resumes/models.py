@@ -132,3 +132,28 @@ class JobDescription(models.Model):
             return "Medium Match"
         else:
             return "Low Match"
+
+class JobApplication(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('ACCEPTED', 'Accepted'),
+        ('REJECTED', 'Rejected'),
+    ]
+    
+    job = models.ForeignKey(JobDescription, on_delete=models.CASCADE, related_name='applications')
+    candidate = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='applications')
+    applied_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
+    
+    class Meta:
+        unique_together = ('job', 'candidate')
+        ordering = ['-applied_at']
+    
+    def clean(self):
+        if not self.candidate.is_candidate:
+            raise ValidationError("Only candidates can apply for jobs.")
+        if not self.job.is_active:
+            raise ValidationError("Cannot apply for an inactive job posting.")
+    
+    def __str__(self):
+        return f"{self.candidate.email} - {self.job.title} ({self.status})"

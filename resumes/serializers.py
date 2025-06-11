@@ -1,6 +1,6 @@
 import os
 from rest_framework import serializers
-from .models import Resume, JobDescription
+from .models import Resume, JobDescription, JobApplication
 
 
 class ResumeSerializer(serializers.ModelSerializer):
@@ -31,15 +31,26 @@ class ResumeSerializer(serializers.ModelSerializer):
 class JobDescriptionSerializer(serializers.ModelSerializer):
     job_type = serializers.CharField(required=False)
     experience_level = serializers.CharField(required=False)
+    file_url = serializers.SerializerMethodField()
+    similarity_score = serializers.FloatField(read_only=True, required=False)
+    application_status = serializers.CharField(read_only=True, required=False)
 
     class Meta:
         model = JobDescription
         fields = [
-            'id', 'user', 'file', 'uploaded_at', 'extracted_text',
+            'id', 'user', 'file', 'file_url', 'uploaded_at', 'extracted_text',
             'title', 'company_name', 'location', 'job_type',
-            'experience_level', 'required_skills', 'is_active'
+            'experience_level', 'required_skills', 'is_active',
+            'created_at', 'updated_at', 'similarity_score', 'application_status'
         ]
-        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text']
+        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text', 'created_at', 'updated_at', 
+                           'similarity_score', 'application_status']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        return None
 
     def validate_file(self, file):
         ext = os.path.splitext(file.name)[1]
@@ -106,4 +117,24 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
             attrs['user'] = request.user
             if not request.user.is_company:
                 raise serializers.ValidationError("Only company accounts can upload job descriptions.")
+        return attrs
+
+
+class JobApplicationSerializer(serializers.ModelSerializer):
+    job_title = serializers.CharField(source='job.title', read_only=True)
+    company_name = serializers.CharField(source='job.company_name', read_only=True)
+    candidate_email = serializers.CharField(source='candidate.email', read_only=True)
+    
+    class Meta:
+        model = JobApplication
+        fields = ['id', 'job', 'job_title', 'company_name', 'candidate', 'candidate_email', 
+                 'applied_at', 'status']
+        read_only_fields = ['candidate', 'applied_at', 'status']
+    
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            attrs['candidate'] = request.user
+            if not request.user.is_candidate:
+                raise serializers.ValidationError("Only candidates can apply for jobs.")
         return attrs

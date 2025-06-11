@@ -1,13 +1,14 @@
 from rest_framework import generics, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework.decorators import api_view, permission_classes
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 import logging
 
-from .models import Resume, JobDescription
+from .models import Resume, JobDescription, JobApplication
 from matcher.models import SimilarityScore
-from .serializers import ResumeSerializer, JobDescriptionSerializer
+from .serializers import ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer
 from matcher.serializers import SimilarityScoreSerializer
 from matcher.utils import extract_text_from_file, calculate_similarity
 
@@ -343,3 +344,152 @@ class JobDescriptionView(APIView):
                 {'error': 'Job description not found'}, 
                 status=status.HTTP_404_NOT_FOUND
             )
+
+
+class JobDescriptionListView(generics.ListAPIView):
+    serializer_class = JobDescriptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['job_type', 'experience_level', 'is_active']
+    ordering_fields = ['created_at', 'title']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin:
+            return JobDescription.objects.all()
+        elif user.is_company:
+            return JobDescription.objects.filter(user=user)
+        elif user.is_candidate:
+            return JobDescription.objects.filter(is_active=True)
+        return JobDescription.objects.none()
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+
+class JobDescriptionSearchView(generics.ListAPIView):
+    serializer_class = JobDescriptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['job_type', 'experience_level', 'location']
+    search_fields = ['title', 'company_name', 'required_skills', 'location']
+    ordering_fields = ['created_at', 'title', 'similarity_score']
+    ordering = ['-similarity_score']  # Default sort by score
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_candidate:
+            return JobDescription.objects.none()
+
+        # Get active job descriptions
+        queryset = JobDescription.objects.filter(is_active=True)
+
+        # Get the candidate's resume
+        try:
+            resume = Resume.objects.get(user=user)
+            if resume and resume.extracted_text:
+                # Get similarity scores for this resume
+                scores = SimilarityScore.objects.filter(
+                    resume=resume,
+                    job_description__in=queryset
+                ).select_related('job_description')
+
+                # Create a dictionary of scores
+                score_dict = {score.job_description_id: score.score for score in scores}
+
+                # Add score to each job description
+                for job in queryset:
+                    job.similarity_score = score_dict.get(job.id, 0.0)
+
+                # Apply minimum score filter if specified
+                min_score = self.request.query_params.get('min_score')
+                if min_score:
+                    try:
+                        min_score = float(min_score)
+                        queryset = [job for job in queryset if getattr(job, 'similarity_score', 0.0) >= min_score]
+                    except (TypeError, ValueError):
+                        pass
+
+                # Get application status for each job
+                applications = JobApplication.objects.filter(
+                    job__in=queryset,
+                    candidate=user
+                ).values_list('job_id', 'status')
+                application_dict = dict(applications)
+
+                # Add application status to each job
+                for job in queryset:
+                    job.application_status = application_dict.get(job.id)
+
+                # Sort by specified field
+                sort_by = self.request.query_params.get('sort_by', 'score')
+                if sort_by == 'date':
+                    queryset = sorted(queryset, key=lambda x: x.created_at, reverse=True)
+                elif sort_by == 'score':
+                    queryset = sorted(queryset, key=lambda x: getattr(x, 'similarity_score', 0.0), reverse=True)
+
+        except Resume.DoesNotExist:
+            pass
+
+        return queryset
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
+
+@api_view(['POST'])
+@permission_classes([permissions.IsAuthenticated])
+def apply_for_job(request, job_id):
+    try:
+        job = JobDescription.objects.get(id=job_id)
+        
+        # Check if already applied
+        if JobApplication.objects.filter(job=job, candidate=request.user).exists():
+            return Response(
+                {'detail': 'You have already applied for this job.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create new application
+        application = JobApplication.objects.create(
+            job=job,
+            candidate=request.user
+        )
+        
+        serializer = JobApplicationSerializer(application)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
+    except JobDescription.DoesNotExist:
+        return Response(
+            {'detail': 'Job not found.'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error applying for job: {str(e)}", exc_info=True)
+        return Response(
+            {'detail': 'An error occurred while processing your application.'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+class JobApplicationListView(generics.ListAPIView):
+    serializer_class = JobApplicationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['status', 'job__job_type', 'job__experience_level']
+    ordering_fields = ['applied_at', 'status']
+    ordering = ['-applied_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_admin:
+            return JobApplication.objects.all()
+        elif user.is_company:
+            return JobApplication.objects.filter(job__user=user)
+        elif user.is_candidate:
+            return JobApplication.objects.filter(candidate=user)
+        return JobApplication.objects.none()
