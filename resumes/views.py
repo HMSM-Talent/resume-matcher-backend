@@ -377,7 +377,7 @@ class JobDescriptionSearchView(generics.ListAPIView):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['job_type', 'experience_level', 'location']
     search_fields = ['title', 'company_name', 'required_skills', 'location']
-    ordering_fields = ['created_at', 'title']
+    ordering_fields = ['created_at', 'title', 'score_value']
     ordering = ['-created_at']  # Default sort by date
 
     def get_queryset(self):
@@ -392,21 +392,27 @@ class JobDescriptionSearchView(generics.ListAPIView):
         try:
             resume = Resume.objects.get(user=user)
             if resume and resume.extracted_text:
-                # Get similarity scores for this resume
-                scores = SimilarityScore.objects.filter(
-                    resume=resume,
-                    job_description__in=queryset
-                ).select_related('job_description')
-
-                # Create a dictionary of scores
-                score_dict = {score.job_description_id: score.score for score in scores}
+                # Calculate similarity scores and store them in a dictionary
+                score_dict = {}
+                for job in queryset:
+                    if job.extracted_text:
+                        try:
+                            # Calculate similarity using the same algorithm as Candidate Dashboard
+                            score, _ = calculate_similarity(resume.extracted_text, job.extracted_text)
+                            score_dict[job.id] = score
+                        except Exception as e:
+                            logger.error(f"Error calculating similarity score: {str(e)}")
+                            score_dict[job.id] = 0.0
+                    else:
+                        score_dict[job.id] = 0.0
 
                 # Apply minimum score filter if specified
                 min_score = self.request.query_params.get('min_score')
                 if min_score:
                     try:
                         min_score = float(min_score)
-                        queryset = queryset.filter(id__in=[job.id for job in queryset if score_dict.get(job.id, 0.0) >= min_score])
+                        job_ids = [job_id for job_id, score in score_dict.items() if score >= min_score]
+                        queryset = queryset.filter(id__in=job_ids)
                     except (TypeError, ValueError):
                         pass
 
@@ -417,28 +423,41 @@ class JobDescriptionSearchView(generics.ListAPIView):
                 ).values_list('job_id', 'status')
                 application_dict = dict(applications)
 
-                # Add application status and similarity score to each job
+                # Add application status and score to each job
                 for job in queryset:
                     job.application_status = application_dict.get(job.id)
-                    job.similarity_score = score_dict.get(job.id, 0.0)
+                    job.score = score_dict.get(job.id, 0.0)
+
+                # Always annotate with score_value for consistent sorting
+                queryset = queryset.annotate(
+                    score_value=models.Case(
+                        *[models.When(id=job_id, then=models.Value(score)) 
+                          for job_id, score in score_dict.items()],
+                        default=models.Value(0),
+                        output_field=models.FloatField(),
+                    )
+                )
 
                 # Sort by specified field
                 sort_by = self.request.query_params.get('sort_by', 'date')
                 if sort_by == 'score':
-                    # Use annotation for score-based sorting
-                    queryset = queryset.annotate(
-                        score_value=models.Case(
-                            *[models.When(id=job_id, then=models.Value(score)) 
-                              for job_id, score in score_dict.items()],
-                            default=models.Value(0),
-                            output_field=models.FloatField(),
-                        )
-                    ).order_by('-score_value')
+                    queryset = queryset.order_by(
+                        models.F('score_value').desc(nulls_last=True),
+                        '-created_at'  # Secondary sort by date for jobs with same score
+                    )
                 else:  # default to date
                     queryset = queryset.order_by('-created_at')
 
         except Resume.DoesNotExist:
-            pass
+            # If no resume exists, set score to None for all jobs
+            queryset = queryset.annotate(
+                score_value=models.Value(None, output_field=models.FloatField())
+            ).order_by(
+                models.F('score_value').desc(nulls_last=True),
+                '-created_at'  # Secondary sort by date for jobs without scores
+            )
+            for job in queryset:
+                job.score = None
 
         return queryset
 

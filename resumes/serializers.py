@@ -32,7 +32,7 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
     job_type = serializers.CharField(required=False)
     experience_level = serializers.CharField(required=False)
     file_url = serializers.SerializerMethodField()
-    similarity_score = serializers.FloatField(read_only=True, required=False)
+    score = serializers.FloatField(read_only=True, required=False, allow_null=True)
     application_status = serializers.CharField(read_only=True, required=False)
 
     class Meta:
@@ -41,10 +41,10 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
             'id', 'user', 'file', 'file_url', 'uploaded_at', 'extracted_text',
             'title', 'company_name', 'location', 'job_type',
             'experience_level', 'required_skills', 'is_active',
-            'created_at', 'updated_at', 'similarity_score', 'application_status'
+            'created_at', 'updated_at', 'score', 'application_status'
         ]
         read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text', 'created_at', 'updated_at', 
-                           'similarity_score', 'application_status']
+                           'score', 'application_status']
 
     def get_file_url(self, obj):
         request = self.context.get('request')
