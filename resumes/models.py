@@ -130,3 +130,16 @@ class JobDescription(models.Model):
             return "Medium Match"
         else:
             return "Low Match"
+
+
+class Application(models.Model):
+    resume = models.ForeignKey(Resume, on_delete=models.CASCADE)
+    job_description = models.ForeignKey(JobDescription, on_delete=models.CASCADE)
+    applied_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('resume', 'job_description') # A candidate can only apply once to a specific job
+        ordering = ['-applied_at'] # Order by most recent applications first
+
+    def __str__(self):
+        return f"Application by {self.resume.user.email} for {self.job_description.title}"

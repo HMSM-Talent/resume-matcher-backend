@@ -1,13 +1,22 @@
 import os
 from rest_framework import serializers
-from .models import Resume, JobDescription
+from .models import Resume, JobDescription, Application
+from accounts.models import CustomUser
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CustomUser
+        fields = ['id', 'email', 'first_name', 'last_name']
 
 
 class ResumeSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+
     class Meta:
         model = Resume
-        fields = ['id', 'user', 'file', 'uploaded_at', 'extracted_text']
-        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text']
+        fields = ['id', 'user', 'file', 'uploaded_at', 'extracted_text', 'original_filename']
+        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text', 'original_filename']
 
     def validate_file(self, file):
         # Check file size (max 5MB)
@@ -28,16 +37,27 @@ class ResumeSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class ApplicationSerializer(serializers.ModelSerializer):
+    resume = ResumeSerializer(read_only=True)
+
+    class Meta:
+        model = Application
+        fields = ['id', 'resume', 'job_description', 'applied_at']
+        read_only_fields = ['id', 'resume', 'applied_at']
+
+
 class JobDescriptionSerializer(serializers.ModelSerializer):
     job_type = serializers.CharField(required=False)
     experience_level = serializers.CharField(required=False)
+    applications = ApplicationSerializer(many=True, read_only=True, source='application_set')
 
     class Meta:
         model = JobDescription
         fields = [
             'id', 'user', 'file', 'uploaded_at', 'extracted_text',
             'title', 'company_name', 'location', 'job_type',
-            'experience_level', 'required_skills', 'is_active'
+            'experience_level', 'required_skills', 'is_active',
+            'applications'
         ]
         read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text', 'title', 'company_name', 'location']
 
