@@ -3,6 +3,7 @@ from resumes.models import JobDescription
 from matcher.models import SimilarityScore
 from resumes.utils import extract_text_from_file
 from matcher.llm import extract_job_metadata
+from resumes.serializers import JobDescriptionSerializer as ResumesJobDescriptionSerializer
 
 
 class SimilarityRequestSerializer(serializers.Serializer):
@@ -53,6 +54,8 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
 
 
 class SimilarityScoreSerializer(serializers.ModelSerializer):
+    job_description = ResumesJobDescriptionSerializer(read_only=True)
+
     class Meta:
         model = SimilarityScore
         fields = ['id', 'resume', 'job_description', 'score', 'created_at']

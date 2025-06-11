@@ -39,7 +39,7 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
             'title', 'company_name', 'location', 'job_type',
             'experience_level', 'required_skills', 'is_active'
         ]
-        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text']
+        read_only_fields = ['id', 'uploaded_at', 'user', 'extracted_text', 'title', 'company_name', 'location']
 
     def validate_file(self, file):
         ext = os.path.splitext(file.name)[1]

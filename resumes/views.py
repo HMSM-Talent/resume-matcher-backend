@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 import logging
+import re # Import re module
 
 from .models import Resume, JobDescription
 from matcher.models import SimilarityScore
@@ -143,6 +144,56 @@ class ResumeUploadView(BaseUploadView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+# Helper function to extract job details
+def _extract_job_details_from_text(text: str) -> dict:
+    title = None
+    company_name = None
+    location = None
+
+    # Max length for CharFields
+    MAX_LENGTH = 200
+
+    logger.debug(f"Attempting to extract details from text (first 500 chars): {text[:500]}...")
+
+    # Improved regex for title: looks for common job titles, usually at the start of a line or sentence.
+    # More restrictive about what follows the job title itself.
+    title_match = re.search(r"^(?:(?:senior|junior|lead|staff|principal|associate|entry level|mid level|senior level|lead level|manager level)\s+)?([a-zA-Z0-9\s\.\-\/,]{5,150}?)(?:\s+at|\s+for|\s+in|$)", text, re.IGNORECASE | re.MULTILINE)
+    if title_match:
+        title = title_match.group(1).strip()
+        logger.debug(f"Title regex matched: '{title}'")
+        if title and len(title) > MAX_LENGTH: # Truncate if too long
+            title = title[:MAX_LENGTH]
+            logger.debug(f"Title truncated to: '{title}'")
+
+    # Improved regex for company name: looks for common company name indicators, often capitalized.
+    # Focuses on capturing a single line or phrase.
+    company_name_match = re.search(r"(?:at|for|by|company):?\s*([A-Z][a-zA-Z0-9\s&.,\-']{3,150}?)(?:\s+(?:Inc|LLC|Corp|GmbH|Ltd|Group|Solutions|Technologies|Innovations|Services|Partners|Advisory|Consulting|Labs|Ventures|Systems))?\b", text, re.IGNORECASE)
+    if company_name_match:
+        company_name = company_name_match.group(1).strip()
+        logger.debug(f"Company name regex matched: '{company_name}'")
+        if company_name and len(company_name) > MAX_LENGTH: # Truncate if too long
+            company_name = company_name[:MAX_LENGTH]
+            logger.debug(f"Company name truncated to: '{company_name}'")
+
+    # Improved regex for location: looks for city, state, country patterns, often capitalized.
+    # More focused on typical location formats.
+    location_match = re.search(r"(?:location|based in|office in|work from):?\s*([A-Z][a-zA-Z\s.,\-]{3,150}?)(?:,\s*[A-Z]{2})?(?:,\s*[A-Z][a-zA-Z]+)?(?:,\s*\b(?:USA|United States|Canada|UK|United Kingdom|Germany|France|India|Australia))?\b", text, re.IGNORECASE)
+    if location_match:
+        location = location_match.group(1).strip()
+        logger.debug(f"Location regex matched: '{location}'")
+        if location and len(location) > MAX_LENGTH: # Truncate if too long
+            location = location[:MAX_LENGTH]
+            logger.debug(f"Location truncated to: '{location}'")
+
+    logger.debug(f"Extracted details - Title: '{title}', Company: '{company_name}', Location: '{location}'")
+
+    return {
+        'title': title,
+        'company_name': company_name,
+        'location': location
+    }
+
+
 class JobDescriptionUploadView(BaseUploadView):
     permission_classes = [IsCompanyOrAdmin]
     serializer_class = JobDescriptionSerializer
@@ -156,25 +207,69 @@ class JobDescriptionUploadView(BaseUploadView):
         if 'is_active' not in request.data:
             request.data['is_active'] = True
             
-        # Call parent's post method to handle the upload
-        response = super().post(request)
-        
-        # If upload was successful (201 Created), create a JobListing
-        if response.status_code == status.HTTP_201_CREATED:
-            try:
-                job_description = JobDescription.objects.get(id=response.data['id'])
-                # Create a JobListing for this job description
-                JobListing.objects.create(
-                    job_description=job_description,
-                    company=request.user,
-                    is_active=True
-                )
-                logger.info(f"Created JobListing for JobDescription {job_description.id}")
-            except Exception as e:
-                logger.error(f"Failed to create JobListing: {str(e)}")
-                # Don't return error to client since the upload was successful
-                
-        return response
+        serializer = self.serializer_class(data=request.data, context={'request': request})
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        instance = serializer.save()
+
+        try:
+            logger.info(f"Processing {self.model_class.__name__} upload for user {request.user.id}")
+            extracted_text = extract_text_from_file(instance.file)
+            instance.extracted_text = extracted_text
+            
+            # Extract structured details from the text
+            extracted_details = _extract_job_details_from_text(extracted_text)
+            instance.title = extracted_details.get('title')
+            instance.company_name = extracted_details.get('company_name')
+            instance.location = extracted_details.get('location')
+
+            instance.save() # Save again after updating details
+            logger.info(f"Text extracted and saved for {self.model_class.__name__} ID {instance.id}")
+
+            opposite_queryset = self.get_opposite_queryset()
+            logger.info(f"Found {opposite_queryset.count()} opposite documents for scoring")
+
+            for other in opposite_queryset:
+                logger.debug(f"Calculating similarity between {self.model_class.__name__} {instance.id} and {other.__class__.__name__} {other.id}")
+                score, _ = calculate_similarity(extracted_text, other.extracted_text)
+                logger.info(f"Similarity score calculated: {score}")
+
+                if self.get_user_role_check() == 'candidate':
+                    SimilarityScore.objects.update_or_create(
+                        resume=instance,
+                        job_description=other,
+                        defaults={'score': score}
+                    )
+                    logger.info(f"Score saved: resume={instance.id}, job_description={other.id}, score={score}")
+                else:
+                    SimilarityScore.objects.update_or_create(
+                        resume=other,
+                        job_description=instance,
+                        defaults={'score': score}
+                    )
+                    logger.info(f"Score saved: resume={other.id}, job_description={instance.id}, score={score}")
+
+            # Create a JobListing for this job description
+            JobListing.objects.create(
+                job_description=instance,
+                company=request.user,
+                is_active=True
+            )
+            logger.info(f"Created JobListing for JobDescription {instance.id}")
+
+            return Response({
+                "message": f"{self.model_class.__name__} uploaded and processed successfully.",
+                "extracted_text": extracted_text,
+                "title": instance.title,
+                "company_name": instance.company_name,
+                "location": instance.location,
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            instance.delete() # Delete the instance if processing fails
+            logger.error(f"Error processing job description upload: {str(e)}", exc_info=True)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ──────── Score List View ────────
@@ -285,3 +380,39 @@ class DebugView(APIView):
                 } for s in user_scores[:5]
             ]
         })
+
+
+class JobDescriptionListView(generics.ListAPIView):
+    serializer_class = JobDescriptionSerializer
+    permission_classes = [IsCompanyOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = {
+        'job_type': ['exact'],
+        'experience_level': ['exact'],
+        'location': ['exact', 'icontains'],
+        'is_active': ['exact'],
+    }
+    ordering_fields = ['uploaded_at', 'title']
+    ordering = ['-uploaded_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        logger.info(f"Getting job descriptions for company: {user.id} ({user.email})")
+        
+        # Base queryset - only get job descriptions for this company
+        qs = JobDescription.objects.filter(user=user)
+        logger.info(f"Found {qs.count()} job descriptions for company")
+        
+        return qs
+
+
+class JobDescriptionDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = JobDescription.objects.all()
+    serializer_class = JobDescriptionSerializer
+    permission_classes = [IsCompanyOrAdmin]
+
+    def get_queryset(self):
+        # Ensure a company can only retrieve, update, or delete their own job descriptions
+        if self.request.user.is_company:
+            return self.queryset.filter(user=self.request.user)
+        return self.queryset.none()
