@@ -11,6 +11,7 @@ from matcher.models import SimilarityScore
 from .serializers import ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer
 from matcher.serializers import SimilarityScoreSerializer
 from matcher.utils import extract_text_from_file, calculate_similarity
+from django.db import models
 
 logger = logging.getLogger(__name__)
 
@@ -376,8 +377,8 @@ class JobDescriptionSearchView(generics.ListAPIView):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['job_type', 'experience_level', 'location']
     search_fields = ['title', 'company_name', 'required_skills', 'location']
-    ordering_fields = ['created_at', 'title', 'similarity_score']
-    ordering = ['-similarity_score']  # Default sort by score
+    ordering_fields = ['created_at', 'title']
+    ordering = ['-created_at']  # Default sort by date
 
     def get_queryset(self):
         user = self.request.user
@@ -400,16 +401,12 @@ class JobDescriptionSearchView(generics.ListAPIView):
                 # Create a dictionary of scores
                 score_dict = {score.job_description_id: score.score for score in scores}
 
-                # Add score to each job description
-                for job in queryset:
-                    job.similarity_score = score_dict.get(job.id, 0.0)
-
                 # Apply minimum score filter if specified
                 min_score = self.request.query_params.get('min_score')
                 if min_score:
                     try:
                         min_score = float(min_score)
-                        queryset = [job for job in queryset if getattr(job, 'similarity_score', 0.0) >= min_score]
+                        queryset = queryset.filter(id__in=[job.id for job in queryset if score_dict.get(job.id, 0.0) >= min_score])
                     except (TypeError, ValueError):
                         pass
 
@@ -420,16 +417,25 @@ class JobDescriptionSearchView(generics.ListAPIView):
                 ).values_list('job_id', 'status')
                 application_dict = dict(applications)
 
-                # Add application status to each job
+                # Add application status and similarity score to each job
                 for job in queryset:
                     job.application_status = application_dict.get(job.id)
+                    job.similarity_score = score_dict.get(job.id, 0.0)
 
                 # Sort by specified field
-                sort_by = self.request.query_params.get('sort_by', 'score')
-                if sort_by == 'date':
-                    queryset = sorted(queryset, key=lambda x: x.created_at, reverse=True)
-                elif sort_by == 'score':
-                    queryset = sorted(queryset, key=lambda x: getattr(x, 'similarity_score', 0.0), reverse=True)
+                sort_by = self.request.query_params.get('sort_by', 'date')
+                if sort_by == 'score':
+                    # Use annotation for score-based sorting
+                    queryset = queryset.annotate(
+                        score_value=models.Case(
+                            *[models.When(id=job_id, then=models.Value(score)) 
+                              for job_id, score in score_dict.items()],
+                            default=models.Value(0),
+                            output_field=models.FloatField(),
+                        )
+                    ).order_by('-score_value')
+                else:  # default to date
+                    queryset = queryset.order_by('-created_at')
 
         except Resume.DoesNotExist:
             pass
