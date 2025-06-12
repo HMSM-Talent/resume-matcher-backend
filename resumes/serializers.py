@@ -258,9 +258,17 @@ class JobDashboardSerializer(serializers.ModelSerializer):
     def get_application_counts(self, obj):
         applications = obj.applications.all()
         total = applications.count()
-        high_match = applications.filter(similarity_score__score__gte=0.8).count()
-        medium_match = applications.filter(similarity_score__score__gte=0.6, similarity_score__score__lt=0.8).count()
-        low_match = applications.filter(similarity_score__score__lt=0.6).count()
+        
+        # Get all similarity scores for this job's applications
+        similarity_scores = SimilarityScore.objects.filter(
+            job_description=obj,
+            resume__in=applications.values_list('resume', flat=True)
+        )
+        
+        # Count applications by score ranges
+        high_match = similarity_scores.filter(score__gte=0.8).count()
+        medium_match = similarity_scores.filter(score__gte=0.6, score__lt=0.8).count()
+        low_match = similarity_scores.filter(score__lt=0.6).count()
         
         return {
             'total': total,
@@ -302,11 +310,23 @@ class CompanyHistorySerializer(serializers.ModelSerializer):
 
     def get_application_stats(self, obj):
         applications = obj.applications.all()
+        
+        # Get all similarity scores for this job's applications
+        similarity_scores = SimilarityScore.objects.filter(
+            job_description=obj,
+            resume__in=applications.values_list('resume', flat=True)
+        )
+        
+        # Count applications by score ranges
+        high_match = similarity_scores.filter(score__gte=0.8).count()
+        medium_match = similarity_scores.filter(score__gte=0.6, score__lt=0.8).count()
+        low_match = similarity_scores.filter(score__lt=0.6).count()
+        
         return {
             'total': applications.count(),
-            'high_match': applications.filter(similarity_score__score__gte=0.8).count(),
-            'medium_match': applications.filter(similarity_score__score__gte=0.6, similarity_score__score__lt=0.8).count(),
-            'low_match': applications.filter(similarity_score__score__lt=0.6).count()
+            'high_match': high_match,
+            'medium_match': medium_match,
+            'low_match': low_match
         }
 
 
@@ -317,5 +337,5 @@ class JobCloseSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JobDescription
-        fields = ['id', 'is_active', 'closed_at', 'close_reason']
+        fields = ['id', 'is_active', 'closed_at', 'close_reason', 'reason']
         read_only_fields = ['id', 'is_active', 'closed_at']
