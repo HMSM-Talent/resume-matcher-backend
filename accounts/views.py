@@ -8,8 +8,10 @@ from .serializers import (
     CandidateRegistrationSerializer,
     CompanyRegistrationSerializer
 )
+import logging
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class UserRegistrationView(generics.CreateAPIView):
     queryset = User.objects.all()
@@ -46,7 +48,23 @@ class UserDetailView(generics.RetrieveUpdateAPIView):
     serializer_class = UserSerializer
 
     def get_object(self):
-        return self.request.user
+        user = self.request.user
+        logger.info(f"UserDetailView - User: {user.email}")
+        logger.info(f"UserDetailView - Role: {user.role}")
+        logger.info(f"UserDetailView - Is authenticated: {user.is_authenticated}")
+        logger.info(f"UserDetailView - Is company: {user.is_company}")
+        logger.info(f"UserDetailView - Is admin: {user.is_admin}")
+        logger.info(f"UserDetailView - Auth header: {self.request.headers.get('Authorization', 'No auth header')}")
+        return user
+
+    def get(self, request, *args, **kwargs):
+        try:
+            response = super().get(request, *args, **kwargs)
+            logger.info(f"UserDetailView - Response data: {response.data}")
+            return response
+        except Exception as e:
+            logger.error(f"UserDetailView - Error: {str(e)}", exc_info=True)
+            raise
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [permissions.AllowAny]

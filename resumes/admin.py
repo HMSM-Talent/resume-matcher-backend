@@ -6,7 +6,7 @@ class JobDescriptionAdmin(admin.ModelAdmin):
     list_display = ('title', 'company_name', 'location', 'job_type', 'experience_level', 'is_active', 'created_at')
     list_filter = ('job_type', 'experience_level', 'is_active', 'created_at')
     search_fields = ('title', 'company_name', 'location', 'required_skills')
-    readonly_fields = ('created_at', 'updated_at', 'extracted_text')
+    readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
         ('Basic Information', {
             'fields': ('title', 'company_name', 'location', 'is_active')
@@ -15,7 +15,7 @@ class JobDescriptionAdmin(admin.ModelAdmin):
             'fields': ('job_type', 'experience_level', 'required_skills')
         }),
         ('File Information', {
-            'fields': ('file', 'original_filename', 'extracted_text')
+            'fields': ('file', 'original_filename')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

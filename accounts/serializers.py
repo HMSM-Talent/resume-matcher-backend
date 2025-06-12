@@ -44,17 +44,11 @@ class CandidateProfileSerializer(serializers.ModelSerializer):
         fields = ('phone_number',)
 
 class CompanyProfileSerializer(serializers.ModelSerializer):
-    phone_number = serializers.CharField(
-        validators=[RegexValidator(
-            regex=r'^\+?1?\d{9,15}$',
-            message="Phone number must be entered in the format: '+999999999'. Up to 15 digits allowed."
-        )]
-    )
     company_name = serializers.CharField(required=True)
 
     class Meta:
         model = CompanyProfile
-        fields = ('phone_number', 'company_name')
+        fields = ('company_name',)
 
 class BaseRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=True, validators=[validate_password])
@@ -97,10 +91,12 @@ class CandidateRegistrationSerializer(BaseRegistrationSerializer):
         return user
 
 class CompanyRegistrationSerializer(BaseRegistrationSerializer):
+    first_name = serializers.CharField(required=False, max_length=30, allow_blank=True)
+    last_name = serializers.CharField(required=False, max_length=30, allow_blank=True)
     profile = CompanyProfileSerializer(required=True)
 
     class Meta(BaseRegistrationSerializer.Meta):
-        fields = BaseRegistrationSerializer.Meta.fields + ('profile',)
+        fields = BaseRegistrationSerializer.Meta.fields + ('first_name', 'last_name', 'profile')
 
     def validate_profile(self, value):
         if not value.get('company_name'):
