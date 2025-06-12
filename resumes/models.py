@@ -136,24 +136,30 @@ class JobDescription(models.Model):
 class JobApplication(models.Model):
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
-        ('ACCEPTED', 'Accepted'),
-        ('REJECTED', 'Rejected'),
+        ('APPROVED', 'Approved'),
+        ('DECLINED', 'Declined'),
+        ('WITHDRAWN', 'Withdrawn')
     ]
     
     job = models.ForeignKey(JobDescription, on_delete=models.CASCADE, related_name='applications')
     candidate = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='applications')
-    applied_at = models.DateTimeField(auto_now_add=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
-    
+    applied_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    company_feedback = models.TextField(null=True, blank=True)
+    similarity_score = models.FloatField(null=True)
+
     class Meta:
         unique_together = ('job', 'candidate')
         ordering = ['-applied_at']
-    
+
     def clean(self):
         if not self.candidate.is_candidate:
             raise ValidationError("Only candidates can apply for jobs.")
+        if self.job.user.is_candidate:
+            raise ValidationError("Cannot apply to a job posted by a candidate.")
         if not self.job.is_active:
-            raise ValidationError("Cannot apply for an inactive job posting.")
-    
+            raise ValidationError("Cannot apply to an inactive job posting.")
+
     def __str__(self):
         return f"{self.candidate.email} - {self.job.title} ({self.status})"

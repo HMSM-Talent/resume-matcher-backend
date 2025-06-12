@@ -5,10 +5,12 @@ from rest_framework.decorators import api_view, permission_classes
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
 import logging
+from django.utils import timezone
+from datetime import datetime, time
 
 from .models import Resume, JobDescription, JobApplication
 from matcher.models import SimilarityScore
-from .serializers import ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer
+from .serializers import ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer, ApplicationHistorySerializer, CompanyDashboardSerializer, CompanyHistorySerializer
 from matcher.serializers import SimilarityScoreSerializer
 from matcher.utils import extract_text_from_file, calculate_similarity
 from django.db import models
@@ -467,54 +469,246 @@ class JobDescriptionSearchView(generics.ListAPIView):
         return context
 
 @api_view(['POST'])
-@permission_classes([permissions.IsAuthenticated])
+@permission_classes([IsCandidateOrAdmin])
 def apply_for_job(request, job_id):
     try:
         job = JobDescription.objects.get(id=job_id)
+    except JobDescription.DoesNotExist:
+        return Response({
+            'status': 'error',
+            'message': 'Job not found',
+            'detail': 'The requested job does not exist'
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    # Check if user has already applied
+    existing_application = JobApplication.objects.filter(job=job, candidate=request.user).first()
+    if existing_application:
+        # If application is in a final state, prevent re-applying
+        if existing_application.status in ['REJECTED', 'HIRED']:
+            serializer = JobApplicationSerializer(existing_application)
+            return Response({
+                'status': 'error',
+                'message': f'Cannot re-apply for this job (previous application was {existing_application.status.lower()})',
+                'detail': f'Cannot re-apply for this job (previous application was {existing_application.status.lower()})',
+                'data': serializer.data
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Check if already applied
-        if JobApplication.objects.filter(job=job, candidate=request.user).exists():
-            return Response(
-                {'detail': 'You have already applied for this job.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
+        # If application is withdrawn or pending, update it
+        if existing_application.status in ['WITHDRAWN', 'PENDING']:
+            existing_application.status = 'PENDING'
+            existing_application.updated_at = timezone.now()
+            existing_application.save()
+            serializer = JobApplicationSerializer(existing_application)
+            return Response({
+                'status': 'success',
+                'message': 'Application resubmitted successfully',
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
+
+    try:
         # Create new application
         application = JobApplication.objects.create(
             job=job,
-            candidate=request.user
+            candidate=request.user,
+            status='PENDING',
+            applied_at=timezone.now()
         )
-        
+
         serializer = JobApplicationSerializer(application)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
-    except JobDescription.DoesNotExist:
-        return Response(
-            {'detail': 'Job not found.'},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({
+            'status': 'success',
+            'message': 'Application submitted successfully',
+            'data': serializer.data
+        }, status=status.HTTP_201_CREATED)
     except Exception as e:
         logger.error(f"Error applying for job: {str(e)}", exc_info=True)
-        return Response(
-            {'detail': 'An error occurred while processing your application.'},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
+        return Response({
+            'status': 'error',
+            'message': 'Failed to submit application',
+            'detail': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class JobApplicationListView(generics.ListAPIView):
     serializer_class = JobApplicationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCandidateOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['status', 'job__job_type', 'job__experience_level']
-    ordering_fields = ['applied_at', 'status']
+    filterset_fields = ['status']
+    ordering_fields = ['applied_at']
     ordering = ['-applied_at']
 
     def get_queryset(self):
-        user = self.request.user
-        if user.is_admin:
-            return JobApplication.objects.all()
-        elif user.is_company:
-            return JobApplication.objects.filter(job__user=user)
-        elif user.is_candidate:
-            return JobApplication.objects.filter(candidate=user)
-        return JobApplication.objects.none()
+        if not self.request.user.is_authenticated:
+            return JobApplication.objects.none()
+        return JobApplication.objects.filter(
+            candidate=self.request.user
+        ).select_related('job')
+
+    def list(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return Response({
+                'status': 'error',
+                'message': 'Authentication required',
+                'detail': 'Please log in to view your applications'
+            }, status=status.HTTP_401_UNAUTHORIZED)
+
+        if not request.user.is_candidate:
+            return Response({
+                'status': 'error',
+                'message': 'Unauthorized access',
+                'detail': 'Only candidates can view their applications'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                'status': 'success',
+                'message': 'Applications retrieved successfully',
+                'data': serializer.data
+            })
+        except Exception as e:
+            logger.error(f"Error retrieving applications: {str(e)}", exc_info=True)
+            return Response({
+                'status': 'error',
+                'message': 'Failed to retrieve applications',
+                'detail': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ApplicationHistoryView(generics.ListAPIView):
+    serializer_class = ApplicationHistorySerializer
+    permission_classes = [IsCandidateOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['status']
+    search_fields = ['job__title', 'job__company_name']
+    ordering_fields = ['applied_at', 'updated_at', 'similarity_score']
+    ordering = ['-applied_at']
+
+    def get_queryset(self):
+        queryset = JobApplication.objects.filter(
+            candidate=self.request.user
+        ).select_related(
+            'job',
+            'job__user'
+        ).prefetch_related(
+            'job__similarity_scores',
+            'job__file'  # Prefetch the job description file
+        )
+
+        # Handle date range filtering
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+
+        if start_date:
+            try:
+                # Convert to datetime and set to start of day
+                start_datetime = datetime.strptime(start_date, '%Y-%m-%d')
+                start_datetime = timezone.make_aware(
+                    datetime.combine(start_datetime.date(), time.min)
+                )
+                queryset = queryset.filter(applied_at__gte=start_datetime)
+            except ValueError:
+                pass
+
+        if end_date:
+            try:
+                # Convert to datetime and set to end of day
+                end_datetime = datetime.strptime(end_date, '%Y-%m-%d')
+                end_datetime = timezone.make_aware(
+                    datetime.combine(end_datetime.date(), time.max)
+                )
+                queryset = queryset.filter(applied_at__lte=end_datetime)
+            except ValueError:
+                pass
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'status': 'success',
+            'message': 'Applications retrieved successfully',
+            'data': serializer.data
+        })
+
+
+class WithdrawApplicationView(generics.GenericAPIView):
+    serializer_class = ApplicationHistorySerializer
+    permission_classes = [IsCandidateOrAdmin]
+    queryset = JobApplication.objects.all()
+
+    def get_queryset(self):
+        return JobApplication.objects.filter(
+            candidate=self.request.user
+        )
+
+    def post(self, request, *args, **kwargs):
+        application = self.get_object()
+        
+        # Check if application can be withdrawn
+        if application.status == 'WITHDRAWN':
+            return Response({
+                'status': 'error',
+                'message': 'Application is already withdrawn'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        if application.status in ['REJECTED', 'HIRED']:
+            return Response({
+                'status': 'error',
+                'message': f'Cannot withdraw application in {application.status.lower()} state'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Update application status
+        application.status = 'WITHDRAWN'
+        application.updated_at = timezone.now()
+        application.save()
+
+        serializer = self.get_serializer(application)
+        return Response({
+            'status': 'success',
+            'message': 'Application withdrawn successfully',
+            'data': {
+                'id': application.id,
+                'status': application.status,
+                'withdrawn_at': application.updated_at
+            }
+        })
+
+
+class CompanyDashboardView(generics.ListAPIView):
+    serializer_class = CompanyDashboardSerializer
+    permission_classes = [IsCompanyOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    search_fields = ['title']
+    ordering_fields = ['created_at']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        return JobDescription.objects.filter(
+            user=self.request.user
+        ).prefetch_related(
+            'applications',
+            'applications__candidate',
+            'applications__candidate__candidateprofile'
+        )
+
+
+class CompanyHistoryView(generics.ListAPIView):
+    serializer_class = CompanyHistorySerializer
+    permission_classes = [IsCompanyOrAdmin]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['title', 'company_name', 'location']
+    ordering_fields = ['created_at', 'total_applications']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        return JobDescription.objects.filter(
+            user=self.request.user
+        ).prefetch_related(
+            'applications',
+            'applications__candidate',
+            'applications__candidate__candidateprofile'
+        )
