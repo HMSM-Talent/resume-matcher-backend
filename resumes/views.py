@@ -733,8 +733,8 @@ class CompanyDashboardView(APIView):
             logger.info(f"Found {jobs.count()} active jobs for user {request.user.email}")
 
             # Serialize the data
-            serializer = self.serializer_class({'jobs': jobs})
-            return Response(serializer.data)
+            jobs_data = JobDashboardSerializer(jobs, many=True, context={'request': request}).data
+            return Response({'jobs': jobs_data})
 
         except Exception as e:
             logger.error(f"Error in company dashboard: {str(e)}", exc_info=True)

@@ -221,7 +221,7 @@ class CandidateSerializer(serializers.ModelSerializer):
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
-    candidate = CandidateSerializer(source='resume.user')
+    candidate = serializers.SerializerMethodField()
     match_score = serializers.SerializerMethodField()
     match_category = serializers.SerializerMethodField()
     status = serializers.CharField()
@@ -230,6 +230,16 @@ class ApplicationSerializer(serializers.ModelSerializer):
     class Meta:
         model = JobApplication
         fields = ['id', 'candidate', 'match_score', 'match_category', 'status', 'applied_at']
+
+    def get_candidate(self, obj):
+        if obj.resume and obj.resume.user:
+            return {
+                'id': obj.resume.user.id,
+                'email': obj.resume.user.email,
+                'first_name': obj.resume.user.first_name,
+                'last_name': obj.resume.user.last_name
+            }
+        return None
 
     def get_match_score(self, obj):
         try:
@@ -260,7 +270,7 @@ class ApplicationSerializer(serializers.ModelSerializer):
 
 class JobDashboardSerializer(serializers.ModelSerializer):
     application_counts = serializers.SerializerMethodField()
-    applications = ApplicationSerializer(many=True)
+    applications = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     closed_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
@@ -273,6 +283,10 @@ class JobDashboardSerializer(serializers.ModelSerializer):
             'experience_level', 'is_active', 'created_at', 'updated_at',
             'closed_at', 'close_reason', 'application_counts', 'applications'
         ]
+
+    def get_applications(self, obj):
+        applications = obj.applications.all()
+        return ApplicationSerializer(applications, many=True, context=self.context).data
 
     def get_application_counts(self, obj):
         applications = obj.applications.all()
@@ -297,12 +311,14 @@ class JobDashboardSerializer(serializers.ModelSerializer):
         }
 
 
-class CompanyDashboardSerializer(serializers.Serializer):
-    jobs = serializers.SerializerMethodField()
-
-    def get_jobs(self, obj):
-        jobs = obj.get('jobs', [])
-        return JobDashboardSerializer(jobs, many=True).data
+class CompanyDashboardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = JobDescription
+        fields = [
+            'id', 'title', 'company_name', 'location', 'job_type',
+            'experience_level', 'is_active', 'created_at', 'updated_at',
+            'closed_at', 'close_reason'
+        ]
 
 
 class CompanyHistorySerializer(serializers.ModelSerializer):
