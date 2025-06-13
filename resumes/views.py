@@ -707,7 +707,6 @@ class WithdrawApplicationView(APIView):
 
 class CompanyDashboardView(APIView):
     permission_classes = [IsCompanyOrAdmin]
-    serializer_class = CompanyDashboardSerializer
 
     def get(self, request):
         try:
@@ -734,12 +733,22 @@ class CompanyDashboardView(APIView):
 
             # Serialize the data
             jobs_data = JobDashboardSerializer(jobs, many=True, context={'request': request}).data
-            return Response({'jobs': jobs_data})
+            
+            # Return the response with status and data wrapper
+            return Response({
+                'status': 'success',
+                'data': {
+                    'jobs': jobs_data
+                }
+            })
 
         except Exception as e:
             logger.error(f"Error in company dashboard: {str(e)}", exc_info=True)
             return Response(
-                {"error": "An error occurred while fetching the dashboard data"},
+                {
+                    'status': 'error',
+                    'message': 'An error occurred while fetching the dashboard data'
+                },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

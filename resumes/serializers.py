@@ -221,56 +221,50 @@ class CandidateSerializer(serializers.ModelSerializer):
 
 
 class ApplicationSerializer(serializers.ModelSerializer):
-    candidate = serializers.SerializerMethodField()
-    match_score = serializers.SerializerMethodField()
-    match_category = serializers.SerializerMethodField()
-    status = serializers.CharField()
-    applied_at = serializers.DateTimeField(source='created_at')
+    user = serializers.SerializerMethodField()
+    similarity_score = serializers.SerializerMethodField()
+    resume_file_url = serializers.SerializerMethodField()
+    updated_at = serializers.DateTimeField(format='%Y-%m-%d %H:%M:%S')
 
     class Meta:
         model = JobApplication
-        fields = ['id', 'candidate', 'match_score', 'match_category', 'status', 'applied_at']
+        fields = ['id', 'user', 'status', 'updated_at', 'similarity_score', 'resume_file_url']
+        read_only_fields = ['id', 'user', 'similarity_score', 'resume_file_url']
 
-    def get_candidate(self, obj):
-        if obj.resume and obj.resume.user:
-            return {
-                'id': obj.resume.user.id,
-                'email': obj.resume.user.email,
-                'first_name': obj.resume.user.first_name,
-                'last_name': obj.resume.user.last_name
-            }
-        return None
+    def get_user(self, obj):
+        user = obj.resume.user
+        return {
+            'id': user.id,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name
+        }
 
-    def get_match_score(self, obj):
+    def get_similarity_score(self, obj):
         try:
-            score = SimilarityScore.objects.filter(
+            similarity = SimilarityScore.objects.get(
                 job_description=obj.job,
                 resume=obj.resume
-            ).order_by('-created_at').first()
-            
-            if score:
-                return round(score.score * 100, 2)
-            return None
-        except Exception as e:
-            logger.error(f"Error getting similarity score for application {obj.id}: {str(e)}")
-            return None
+            )
+            # Convert to percentage and round to 2 decimal places
+            return round(similarity.score * 100, 2)
+        except SimilarityScore.DoesNotExist:
+            return 0.0
 
-    def get_match_category(self, obj):
-        score = self.get_match_score(obj)
-        if score is not None:
-            score = score / 100  # Convert back to decimal
-            if score >= 0.8:
-                return "High Match"
-            elif score >= 0.6:
-                return "Medium Match"
-            else:
-                return "Low Match"
+    def get_resume_file_url(self, obj):
+        if obj.resume and obj.resume.file:
+            request = self.context.get('request')
+            if request:
+                # Get the relative URL path
+                relative_url = obj.resume.file.url
+                # Build the absolute URL using the request's scheme and host
+                return request.build_absolute_uri(relative_url)
         return None
 
 
 class JobDashboardSerializer(serializers.ModelSerializer):
     application_counts = serializers.SerializerMethodField()
-    applications = serializers.SerializerMethodField()
+    recent_applications = serializers.SerializerMethodField()
     created_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     closed_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
@@ -281,11 +275,13 @@ class JobDashboardSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'company_name', 'location', 'job_type',
             'experience_level', 'is_active', 'created_at', 'updated_at',
-            'closed_at', 'close_reason', 'application_counts', 'applications'
+            'closed_at', 'close_reason', 'application_counts', 'recent_applications'
         ]
 
-    def get_applications(self, obj):
-        applications = obj.applications.all()
+    def get_recent_applications(self, obj):
+        applications = obj.applications.select_related(
+            'resume', 'resume__user'
+        ).order_by('-created_at')[:5]  # Get 5 most recent applications
         return ApplicationSerializer(applications, many=True, context=self.context).data
 
     def get_application_counts(self, obj):
