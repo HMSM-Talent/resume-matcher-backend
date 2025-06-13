@@ -915,3 +915,56 @@ class JobApplicationCreateView(generics.CreateAPIView):
         except Exception as e:
             logger.error(f"Error creating application: {str(e)}")
             raise ValidationError(str(e))
+
+class UpdateApplicationStatusView(APIView):
+    permission_classes = [IsCompanyOrAdmin]
+
+    def post(self, request, application_id):
+        try:
+            application = JobApplication.objects.get(id=application_id)
+            
+            # Check if the user is the owner of the job
+            if application.job.user != request.user and not request.user.is_admin:
+                return Response(
+                    {"error": "You don't have permission to update this application"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Get the new status and feedback from request data
+            new_status = request.data.get('status')
+            feedback = request.data.get('feedback', '')
+
+            # Validate the status
+            if new_status not in ['ACCEPTED', 'REJECTED']:
+                return Response(
+                    {"error": "Invalid status. Must be either 'ACCEPTED' or 'REJECTED'"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Update the application
+            application.status = new_status
+            application.company_feedback = feedback
+            application.save()
+
+            # Return the updated application data
+            return Response({
+                'status': 'success',
+                'data': {
+                    'id': str(application.id),
+                    'status': application.status,
+                    'feedback': application.company_feedback,
+                    'updated_at': application.updated_at
+                }
+            })
+
+        except JobApplication.DoesNotExist:
+            return Response(
+                {"error": "Application not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error updating application status: {str(e)}", exc_info=True)
+            return Response(
+                {"error": "An error occurred while updating the application status"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
