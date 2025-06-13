@@ -569,18 +569,17 @@ class ApplicationHistoryView(generics.ListAPIView):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['status']
     search_fields = ['job__title', 'job__company_name']
-    ordering_fields = ['applied_at', 'updated_at', 'similarity_score']
-    ordering = ['-applied_at']
+    ordering_fields = ['created_at', 'updated_at', 'similarity_score']
+    ordering = ['-created_at']
 
     def get_queryset(self):
         queryset = JobApplication.objects.filter(
-            candidate=self.request.user
+            resume__user=self.request.user
         ).select_related(
             'job',
             'job__user'
         ).prefetch_related(
-            'job__similarity_scores',
-            'job__file'  # Prefetch the job description file
+            'job__similarity_scores'
         )
 
         # Handle date range filtering
@@ -594,7 +593,7 @@ class ApplicationHistoryView(generics.ListAPIView):
                 start_datetime = timezone.make_aware(
                     datetime.combine(start_datetime.date(), time.min)
                 )
-                queryset = queryset.filter(applied_at__gte=start_datetime)
+                queryset = queryset.filter(created_at__gte=start_datetime)
             except ValueError:
                 pass
 
@@ -605,7 +604,7 @@ class ApplicationHistoryView(generics.ListAPIView):
                 end_datetime = timezone.make_aware(
                     datetime.combine(end_datetime.date(), time.max)
                 )
-                queryset = queryset.filter(applied_at__lte=end_datetime)
+                queryset = queryset.filter(created_at__lte=end_datetime)
             except ValueError:
                 pass
 

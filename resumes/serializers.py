@@ -192,7 +192,7 @@ class ApplicationHistorySerializer(serializers.ModelSerializer):
             # Get the latest similarity score for this application
             score = SimilarityScore.objects.filter(
                 job_description=obj.job,
-                resume__user=obj.candidate
+                resume=obj.resume
             ).order_by('-created_at').first()
             
             if score:
