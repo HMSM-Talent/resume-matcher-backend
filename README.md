@@ -1,6 +1,6 @@
 # Resume Matcher Backend
 
-A Django-based backend service for matching resumes with job descriptions using semantic similarity.
+A Django-based backend service for matching resumes with job descriptions using semantic similarity. This service provides a robust API for resume and job description management, with advanced matching capabilities using machine learning.
 
 ## Features
 
@@ -10,12 +10,18 @@ A Django-based backend service for matching resumes with job descriptions using 
 - Match categorization (High/Medium/Low)
 - Filtering and sorting of matches
 - Role-based access control (Candidate/Company/Admin)
+- RESTful API with JWT authentication
+- File storage with AWS S3 support
+- Production-ready configuration
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.11.8 (as specified in .python-version)
+- PostgreSQL 15+
 - pip
 - virtualenv
+- AWS Account (for S3 storage)
+- Hugging Face account (for model access)
 
 ## Installation
 
@@ -27,8 +33,13 @@ cd resume-matcher-backend
 
 2. Create and activate virtual environment:
 ```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# On Windows
+python -m venv .venv
+.venv\Scripts\activate
+
+# On Linux/Mac
+python -m venv .venv
+source .venv/bin/activate
 ```
 
 3. Install dependencies:
@@ -36,75 +47,212 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-4. Run migrations:
+4. Set up environment variables:
+Create a `.env` file in the project root with the following variables:
+```env
+# Django settings
+DEBUG=False
+SECRET_KEY=your-secret-key
+ALLOWED_HOSTS=your-domain.com,www.your-domain.com
+
+# Database settings
+DB_NAME=your_db_name
+DB_USER=your_db_user
+DB_PASSWORD=your_db_password
+DB_HOST=localhost
+DB_PORT=5432
+
+# AWS S3 settings
+AWS_ACCESS_KEY_ID=your_aws_access_key
+AWS_SECRET_ACCESS_KEY=your_aws_secret_key
+AWS_STORAGE_BUCKET_NAME=your_bucket_name
+AWS_S3_REGION_NAME=your_region
+AWS_S3_CUSTOM_DOMAIN=your-custom-domain.com
+
+# JWT settings
+JWT_SECRET_KEY=your-jwt-secret
+JWT_ACCESS_TOKEN_LIFETIME=5
+JWT_REFRESH_TOKEN_LIFETIME=1
+
+# Model settings
+MODEL_PATH=/path/to/phi-2.Q4_K_M.gguf
+```
+
+5. Run migrations:
 ```bash
 python manage.py migrate
 ```
 
-5. Create superuser (optional):
+6. Create superuser:
 ```bash
 python manage.py createsuperuser
 ```
-## Environment Variables
 
-- `LLM_SERVER_URL` *(optional)*: URL of the LLM server used for similarity
-  scoring. Defaults to `http://127.0.0.1:1234/v1/chat/completions`.
-
-## Configuration
-
-Set the `MODEL_PATH` environment variable to the location of your Phi-2 GGUF
-model file. If this variable is not set, the application will look for the file
-at `models/phi-2.Q4_K_M.gguf` relative to the project root. If the model cannot
-be found, a clear error will be raised when starting the server.
-
+7. Collect static files:
 ```bash
-export MODEL_PATH=/path/to/phi-2.Q4_K_M.gguf
+python manage.py collectstatic
 ```
 
-## Running the Server
+## Development Setup
 
+1. Set `DEBUG=True` in `.env`
+2. Use SQLite for development:
+```env
+DATABASE_URL=sqlite:///db.sqlite3
+```
+
+3. Run development server:
 ```bash
 python manage.py runserver
 ```
 
-The server will start at `http://127.0.0.1:8000/`
+## Production Deployment
 
-## API Endpoints
+1. Set up a production server (e.g., AWS EC2, DigitalOcean)
+2. Install required system packages:
+```bash
+# Ubuntu/Debian
+sudo apt update
+sudo apt install python3.11 python3.11-venv postgresql postgresql-contrib nginx
 
-### Authentication
+# CentOS/RHEL
+sudo yum update
+sudo yum install python3.11 postgresql-server postgresql-contrib nginx
+```
+
+3. Configure PostgreSQL:
+```bash
+sudo -u postgres psql
+CREATE DATABASE your_db_name;
+CREATE USER your_db_user WITH PASSWORD 'your_db_password';
+GRANT ALL PRIVILEGES ON DATABASE your_db_name TO your_db_user;
+```
+
+4. Set up Nginx:
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    location /static/ {
+        alias /path/to/your/staticfiles/;
+    }
+
+    location /media/ {
+        alias /path/to/your/media/;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+5. Set up Gunicorn:
+```bash
+gunicorn backend.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 120
+```
+
+6. Set up systemd service:
+```ini
+[Unit]
+Description=Resume Matcher Backend
+After=network.target
+
+[Service]
+User=your_user
+Group=your_group
+WorkingDirectory=/path/to/resume-matcher-backend
+Environment="PATH=/path/to/resume-matcher-backend/.venv/bin"
+ExecStart=/path/to/resume-matcher-backend/.venv/bin/gunicorn backend.wsgi:application --bind 127.0.0.1:8000 --workers 3 --timeout 120
+
+[Install]
+WantedBy=multi-user.target
+```
+
+## API Documentation
+
+### Authentication Endpoints
+
+- Register Candidate: `POST /api/auth/candidate/register/`
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "your_password",
+    "password2": "your_password",
+    "first_name": "John",
+    "last_name": "Doe",
+    "profile": {
+      "phone_number": "+1234567890"  // Optional
+    }
+  }
+  ```
+
+- Register Company: `POST /api/auth/company/register/`
+  ```json
+  {
+    "email": "company@example.com",
+    "password": "your_password",
+    "password2": "your_password",
+    "profile": {
+      "company_name": "Example Corp"
+    }
+  }
+  ```
+
 - Login: `POST /api/auth/login/`
-- Register: `POST /api/auth/register/`
+  ```json
+  {
+    "email": "user@example.com",
+    "password": "your_password"
+  }
+  ```
 
 ### Resume Management
+
 - Upload Resume: `POST /api/upload/resume/`
-- View Resumes: `GET /api/resumes/`
+  - Content-Type: multipart/form-data
+  - Fields: file (PDF/DOCX)
+
+- List Resumes: `GET /api/resumes/`
+  - Query Parameters:
+    - `ordering`: Sort by field
+    - `search`: Search in extracted text
 
 ### Job Description Management
+
 - Upload Job Description: `POST /api/upload/job-description/`
-- View Job Descriptions: `GET /api/job-descriptions/`
+  - Content-Type: multipart/form-data
+  - Fields: file (PDF), title, company_name, location, job_type, experience_level
+
+- List Job Descriptions: `GET /api/job-descriptions/`
+  - Query Parameters:
+    - `is_active`: Filter active/inactive jobs
+    - `job_type`: Filter by job type
+    - `experience_level`: Filter by experience level
 
 ### Similarity Scores
-- View Matches: `GET /api/similarity-scores/`
+
+- Get Matches: `GET /api/similarity-scores/`
   - Query Parameters:
-    - `limit`: Get top N matches (e.g., `?limit=5`)
-    - `job_description__job_type`: Filter by job type
-    - `job_description__experience_level`: Filter by experience level
-    - `job_description__location`: Filter by location
-    - `job_description__company_name`: Filter by company
-    - `score__gte`: Filter by minimum score
+    - `limit`: Get top N matches
+    - `score__gte`: Minimum score threshold
     - `ordering`: Sort by score or date
 
 ## Project Structure
 
 ```
 resume-matcher-backend/
+├── accounts/              # User authentication and profiles
 ├── backend/              # Project settings
-├── resumes/             # Main app
-│   ├── models.py        # Database models
-│   ├── views.py         # API views
-│   ├── serializers.py   # Data serializers
-│   └── urls.py          # URL routing
 ├── matcher/             # Similarity matching logic
+├── resumes/             # Main app
+├── search/              # Search functionality
+├── media/               # Uploaded files
+├── static/              # Static files
+├── .env                 # Environment variables
 ├── manage.py            # Django management script
 └── requirements.txt     # Project dependencies
 ```
