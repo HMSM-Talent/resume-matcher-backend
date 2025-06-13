@@ -46,6 +46,9 @@ def get_jd_upload_path(instance, filename):
 # ──────── Models ────────
 
 class Resume(models.Model):
+    objects: models.Manager
+    DoesNotExist: models.ObjectDoesNotExist
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     file = models.FileField(
@@ -74,6 +77,9 @@ class Resume(models.Model):
 
 
 class JobDescription(models.Model):
+    objects: models.Manager
+    DoesNotExist: models.ObjectDoesNotExist
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='job_descriptions')
     title = models.CharField(max_length=255)
@@ -148,6 +154,9 @@ class JobDescription(models.Model):
         self.save()
 
 class JobApplication(models.Model):
+    objects: models.Manager
+    DoesNotExist: models.ObjectDoesNotExist
+
     STATUS_CHOICES = [
         ('PENDING', 'Pending'),
         ('ACCEPTED', 'Accepted'),

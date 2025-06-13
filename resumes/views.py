@@ -2,18 +2,37 @@ from rest_framework import generics, permissions, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
-import logging
+from django.db import models
+from django.db.models import Q, Count, F, Value, CharField, Case, When, BooleanField, FloatField
+from django.db.models.functions import Coalesce
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from django.http import FileResponse
+from django.conf import settings
+from django.shortcuts import get_object_or_404
+import os
+import logging
+import json
+import uuid
 from datetime import datetime, time
 
-from .models import Resume, JobDescription, JobApplication
+# First-party imports (from other apps in your project)
 from matcher.models import SimilarityScore
-from .serializers import ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer, ApplicationHistorySerializer, CompanyDashboardSerializer, CompanyHistorySerializer, JobCloseSerializer
 from matcher.serializers import SimilarityScoreSerializer
-from matcher.utils import extract_text_from_file, calculate_similarity
-from django.db import models
+from matcher.utils import calculate_similarity, get_match_category
+from .utils import extract_text_from_file
+
+# Local imports (from the same app)
+from .models import Resume, JobDescription, JobApplication
+from .serializers import (
+    ResumeSerializer, JobDescriptionSerializer, JobApplicationSerializer,
+    ApplicationHistorySerializer, CompanyDashboardSerializer, CompanyHistorySerializer,
+    JobCloseSerializer, ApplicationSerializer, JobDashboardSerializer
+)
+from .permissions import IsCompanyUser, IsCandidateUser, IsCompanyOrAdmin
+from .tasks import process_resume_async, process_job_description_async
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +57,11 @@ class BaseUploadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = None
     model_class = None
+
+    def get_serializer(self, *args, **kwargs):
+        if not self.serializer_class:
+            raise NotImplementedError("Subclasses must define serializer_class")
+        return self.serializer_class(*args, **kwargs)
 
     def get_user_role_check(self):
         raise NotImplementedError("Subclasses must implement get_user_role_check()")
@@ -433,7 +457,7 @@ class JobDescriptionSearchView(generics.ListAPIView):
                 # Get application status for each job
                 applications = JobApplication.objects.filter(
                     job__in=queryset,
-                    candidate=user
+                    resume__user=user
                 ).values_list('job_id', 'status')
                 application_dict = dict(applications)
 
@@ -481,48 +505,62 @@ class JobDescriptionSearchView(generics.ListAPIView):
         return context
 
 @api_view(['POST'])
-@permission_classes([IsCandidateOrAdmin])
+@permission_classes([IsAuthenticated, IsCandidateUser])
 def apply_for_job(request, job_id):
     try:
-        job = JobDescription.objects.get(id=job_id)
-        if not job.is_active:
+        job = get_object_or_404(JobDescription, id=job_id, is_active=True)
+        
+        # Get the user's latest resume
+        resume = Resume.objects.filter(user=request.user).order_by('-uploaded_at').first()
+        if not resume:
             return Response(
-                {"error": "This job is no longer accepting applications"},
+                {'error': 'Please upload a resume before applying for jobs.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        # Check if user has already applied
+        
+        # Check if already applied
         existing_application = JobApplication.objects.filter(
             job=job,
-            candidate=request.user
+            resume=resume
         ).first()
-
+        
         if existing_application:
             return Response(
-                {"error": "You have already applied for this job"},
+                {'error': 'You have already applied for this job.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-
-        # Create new application
+        
+        # Get similarity score if available
+        similarity_score = None
+        try:
+            score = SimilarityScore.objects.filter(
+                job_description=job,
+                resume=resume
+            ).order_by('-created_at').first()
+            if score:
+                similarity_score = score.score
+        except Exception as e:
+            logger.error(f"Error getting similarity score: {str(e)}")
+        
+        # Create application
         application = JobApplication.objects.create(
             job=job,
-            candidate=request.user,
-            status='PENDING'
+            resume=resume,
+            similarity_score=similarity_score
         )
-
-        return Response({
-            "message": "Application submitted successfully",
-            "application_id": application.id
-        }, status=status.HTTP_201_CREATED)
-
+        
+        serializer = JobApplicationSerializer(application)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        
     except JobDescription.DoesNotExist:
         return Response(
-            {"error": "Job not found"},
+            {'error': 'Job not found or no longer active.'},
             status=status.HTTP_404_NOT_FOUND
         )
     except Exception as e:
+        logger.error(f"Error applying for job: {str(e)}")
         return Response(
-            {"error": str(e)},
+            {'error': str(e)},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
@@ -532,7 +570,7 @@ class JobApplicationListView(generics.ListAPIView):
     permission_classes = [IsCompanyOrAdmin]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['status']
-    search_fields = ['candidate__email', 'candidate__first_name', 'candidate__last_name']
+    search_fields = ['resume__user__email', 'resume__user__first_name', 'resume__user__last_name']
     ordering_fields = ['created_at', 'updated_at', 'similarity_score']
     ordering = ['-created_at']
 
@@ -549,9 +587,9 @@ class JobApplicationListView(generics.ListAPIView):
             return JobApplication.objects.filter(
                 job=job
             ).select_related(
-                'candidate',
-                'candidate__candidate_profile',
-                'resume'
+                'resume',
+                'resume__user',
+                'resume__user__candidate_profile'
             ).prefetch_related(
                 'similarity_score'
             )
@@ -613,11 +651,20 @@ class ApplicationHistoryView(generics.ListAPIView):
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
         serializer = self.get_serializer(queryset, many=True)
-        return Response({
-            'status': 'success',
-            'message': 'Applications retrieved successfully',
-            'data': serializer.data
-        })
+        
+        # Log the response data for debugging
+        logger.info(f"Application history response for user {request.user.email}:")
+        logger.info(f"Found {queryset.count()} applications")
+        for app in queryset:
+            logger.info(f"Application {app.id}:")
+            logger.info(f"  Job: {app.job.title} ({app.job.company_name})")
+            logger.info(f"  Status: {app.status}")
+            logger.info(f"  Applied at: {app.created_at}")
+            logger.info(f"  Updated at: {app.updated_at}")
+            logger.info(f"  Similarity score: {app.similarity_score}")
+        
+        # Return a flattened response structure
+        return Response(serializer.data)
 
 
 class WithdrawApplicationView(APIView):
@@ -627,7 +674,7 @@ class WithdrawApplicationView(APIView):
         try:
             application = JobApplication.objects.get(id=pk)
             
-            if application.candidate != request.user and not request.user.is_admin:
+            if application.resume.user != request.user and not request.user.is_admin:
                 return Response(
                     {"error": "You do not have permission to withdraw this application"},
                     status=status.HTTP_403_FORBIDDEN
@@ -639,7 +686,7 @@ class WithdrawApplicationView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            application.status = 'REJECTED'
+            application.status = 'WITHDRAWN'
             application.save()
 
             return Response({
@@ -680,7 +727,7 @@ class CompanyDashboardView(APIView):
                 'applications',
                 'applications__resume',
                 'applications__resume__user',
-                'applications__similarity_score'
+                'applications__resume__user__candidate_profile'
             ).order_by('-created_at')
 
             logger.info(f"Found {jobs.count()} active jobs for user {request.user.email}")
@@ -818,3 +865,44 @@ class JobCloseView(APIView):
                 {"error": "An error occurred while closing the job"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class JobApplicationCreateView(generics.CreateAPIView):
+    serializer_class = JobApplicationSerializer
+    permission_classes = [IsAuthenticated, IsCandidateUser]
+
+    def perform_create(self, serializer):
+        job_id = self.request.data.get('job')
+        try:
+            job = JobDescription.objects.get(id=job_id, is_active=True)
+            resume = Resume.objects.filter(user=self.request.user).order_by('-uploaded_at').first()
+            
+            if not resume:
+                raise ValidationError("Please upload a resume before applying for jobs.")
+            
+            # Check if already applied
+            if JobApplication.objects.filter(job=job, resume=resume).exists():
+                raise ValidationError("You have already applied for this job.")
+            
+            # Get similarity score if available
+            similarity_score = None
+            try:
+                score = SimilarityScore.objects.filter(
+                    job_description=job,
+                    resume=resume
+                ).order_by('-created_at').first()
+                if score:
+                    similarity_score = score.score
+            except Exception as e:
+                logger.error(f"Error getting similarity score: {str(e)}")
+            
+            serializer.save(
+                job=job,
+                resume=resume,
+                similarity_score=similarity_score
+            )
+            
+        except JobDescription.DoesNotExist:
+            raise ValidationError("Job not found or no longer active.")
+        except Exception as e:
+            logger.error(f"Error creating application: {str(e)}")
+            raise ValidationError(str(e))

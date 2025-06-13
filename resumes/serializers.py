@@ -128,32 +128,36 @@ class JobDescriptionSerializer(serializers.ModelSerializer):
 
 
 class JobApplicationSerializer(serializers.ModelSerializer):
-    candidate = serializers.SerializerMethodField()
-    similarity_score = serializers.SerializerMethodField()
+    job_title = serializers.CharField(source='job.title', read_only=True)
+    company_name = serializers.CharField(source='job.company_name', read_only=True)
+    user = serializers.SerializerMethodField()
     applied_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
 
     class Meta:
         model = JobApplication
         fields = [
-            'id', 'job', 'candidate', 'status', 'applied_at',
-            'updated_at', 'similarity_score', 'company_feedback'
+            'id', 'job', 'user', 'job_title', 'company_name',
+            'status', 'applied_at', 'updated_at', 'similarity_score',
+            'company_feedback'
         ]
         read_only_fields = ['id', 'applied_at', 'updated_at', 'similarity_score']
 
-    def get_candidate(self, obj):
-        return {
-            'id': obj.candidate.id,
-            'email': obj.candidate.email,
-            'first_name': obj.candidate.first_name,
-            'last_name': obj.candidate.last_name
-        }
+    def get_user(self, obj):
+        if obj.resume and obj.resume.user:
+            return {
+                'id': obj.resume.user.id,
+                'email': obj.resume.user.email,
+                'first_name': obj.resume.user.first_name,
+                'last_name': obj.resume.user.last_name
+            }
+        return None
 
     def get_similarity_score(self, obj):
         try:
             score = SimilarityScore.objects.filter(
                 job_description=obj.job,
-                resume__user=obj.candidate
+                resume__user=obj.user['id']
             ).order_by('-created_at').first()
             
             if score:
@@ -167,22 +171,22 @@ class JobApplicationSerializer(serializers.ModelSerializer):
 class ApplicationHistorySerializer(serializers.ModelSerializer):
     job_title = serializers.CharField(source='job.title', read_only=True)
     company_name = serializers.CharField(source='job.company_name', read_only=True)
-    job_description_file = serializers.SerializerMethodField()
-    applied_at = serializers.DateTimeField(format='%b %d, %Y, %I:%M %p', read_only=True)
-    updated_at = serializers.DateTimeField(format='%b %d, %Y, %I:%M %p', read_only=True)
+    job_file_url = serializers.SerializerMethodField()
+    applied_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
+    updated_at = serializers.DateTimeField(format='%Y-%m-%dT%H:%M:%S.%fZ', read_only=True)
     similarity_score = serializers.SerializerMethodField()
     company_feedback = serializers.CharField(read_only=True, allow_null=True)
 
     class Meta:
         model = JobApplication
         fields = [
-            'id', 'job', 'job_title', 'company_name', 'job_description_file',
+            'id', 'job', 'job_title', 'company_name', 'job_file_url',
             'status', 'applied_at', 'updated_at', 'similarity_score',
             'company_feedback'
         ]
         read_only_fields = fields
 
-    def get_job_description_file(self, obj):
+    def get_job_file_url(self, obj):
         if obj.job and obj.job.file:
             return obj.job.file.url
         return None
@@ -218,7 +222,7 @@ class CandidateSerializer(serializers.ModelSerializer):
 
 class ApplicationSerializer(serializers.ModelSerializer):
     candidate = CandidateSerializer(source='resume.user')
-    match_score = serializers.FloatField(source='similarity_score.score')
+    match_score = serializers.SerializerMethodField()
     match_category = serializers.SerializerMethodField()
     status = serializers.CharField()
     applied_at = serializers.DateTimeField(source='created_at')
@@ -227,9 +231,24 @@ class ApplicationSerializer(serializers.ModelSerializer):
         model = JobApplication
         fields = ['id', 'candidate', 'match_score', 'match_category', 'status', 'applied_at']
 
+    def get_match_score(self, obj):
+        try:
+            score = SimilarityScore.objects.filter(
+                job_description=obj.job,
+                resume=obj.resume
+            ).order_by('-created_at').first()
+            
+            if score:
+                return round(score.score * 100, 2)
+            return None
+        except Exception as e:
+            logger.error(f"Error getting similarity score for application {obj.id}: {str(e)}")
+            return None
+
     def get_match_category(self, obj):
-        if obj.similarity_score:
-            score = obj.similarity_score.score
+        score = self.get_match_score(obj)
+        if score is not None:
+            score = score / 100  # Convert back to decimal
             if score >= 0.8:
                 return "High Match"
             elif score >= 0.6:
@@ -263,7 +282,7 @@ class JobDashboardSerializer(serializers.ModelSerializer):
         similarity_scores = SimilarityScore.objects.filter(
             job_description=obj,
             resume__in=applications.values_list('resume', flat=True)
-        )
+        ).select_related('resume')
         
         # Count applications by score ranges
         high_match = similarity_scores.filter(score__gte=0.8).count()
@@ -279,7 +298,11 @@ class JobDashboardSerializer(serializers.ModelSerializer):
 
 
 class CompanyDashboardSerializer(serializers.Serializer):
-    jobs = JobDashboardSerializer(many=True)
+    jobs = serializers.SerializerMethodField()
+
+    def get_jobs(self, obj):
+        jobs = obj.get('jobs', [])
+        return JobDashboardSerializer(jobs, many=True).data
 
 
 class CompanyHistorySerializer(serializers.ModelSerializer):
