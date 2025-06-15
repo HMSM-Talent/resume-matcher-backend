@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Local LLM server URL, configurable via environment variable
-LLM_SERVER_URL = os.getenv("LLM_SERVER_URL", "http://127.0.0.1:1234/v1/chat/completions")
+LLM_SERVER_URL = os.getenv("LLM_SERVER_URL", "http://127.0.0.1:1234")
 
 def get_cosine_similarity(resume_text: str, jd_text: str) -> float:
     """
@@ -38,7 +38,8 @@ def post_with_retries(payload, retries=3, delay=2):
     """Retry LLM request if it fails due to timeout or network errors."""
     for attempt in range(retries):
         try:
-            response = requests.post(LLM_SERVER_URL, json=payload, timeout=10)
+            # Use the correct chat completions endpoint
+            response = requests.post(f"{LLM_SERVER_URL}/v1/chat/completions", json=payload, timeout=10)
             response.raise_for_status()
             return response
         except Exception as e:
@@ -79,23 +80,56 @@ Score (decimal number only):
     try:
         logger.debug("Sending prompt to LLM server...")
         response = post_with_retries({
-            "messages": [{"role": "user", "content": prompt}],
+            "model": "phi-2",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a strict scoring assistant. Always respond with only a decimal number between 0.0 and 1.0."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
             "temperature": 0.1,
-            "max_tokens": 5
+            "max_tokens": 5,
+            "stream": False
         })
 
-        score_text = response.json()["choices"][0]["message"]["content"].strip()
-        logger.debug(f"Raw LLM output: {score_text}")
+        # Log the raw response for debugging
+        logger.debug(f"Raw LLM response: {response.text}")
+        
+        try:
+            response_data = response.json()
+            logger.debug(f"Response data: {response_data}")
+            
+            # Try different response formats
+            if "choices" in response_data and len(response_data["choices"]) > 0:
+                if "message" in response_data["choices"][0]:
+                    score_text = response_data["choices"][0]["message"]["content"].strip()
+                else:
+                    score_text = response_data["choices"][0]["text"].strip()
+            elif "text" in response_data:
+                score_text = response_data["text"].strip()
+            else:
+                # If no expected format found, use the raw text
+                score_text = response.text.strip()
+                
+            logger.debug(f"Extracted score text: {score_text}")
 
-        match = re.search(r"\b([01](?:\.\d+)?|0?\.\d+)\b", score_text)
-        if not match:
-            logger.warning(f"No valid score found in LLM output: '{score_text}'")
+            match = re.search(r"\b([01](?:\.\d+)?|0?\.\d+)\b", score_text)
+            if not match:
+                logger.warning(f"No valid score found in LLM output: '{score_text}'")
+                return 0.0
+
+            score = float(match.group(1))
+            final_score = max(0.0, min(score, 1.0))  # Clamp value within range
+            logger.info(f"Final LLM similarity score: {final_score}")
+            return final_score
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse LLM response as JSON: {e}")
             return 0.0
-
-        score = float(match.group(1))
-        final_score = max(0.0, min(score, 1.0))  # Clamp value within range
-        logger.info(f"Final LLM similarity score: {final_score}")
-        return final_score
 
     except Exception as e:
         logger.error(f"LLM similarity scoring failed: {e}", exc_info=True)

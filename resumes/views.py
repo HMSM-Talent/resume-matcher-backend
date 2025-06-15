@@ -364,6 +364,30 @@ class JobDescriptionView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
 
+            # Get similarity score if user is a candidate
+            score = None
+            if request.user.is_candidate:
+                try:
+                    resume = Resume.objects.get(user=request.user)
+                    if resume and resume.extracted_text and job_description.extracted_text:
+                        score, _ = calculate_similarity(resume.extracted_text, job_description.extracted_text)
+                except Resume.DoesNotExist:
+                    pass
+                except Exception as e:
+                    logger.error(f"Error calculating similarity score: {str(e)}")
+
+            # Get application status if user is a candidate
+            application_status = None
+            if request.user.is_candidate:
+                try:
+                    application = JobApplication.objects.get(
+                        job=job_description,
+                        resume__user=request.user
+                    )
+                    application_status = application.status
+                except JobApplication.DoesNotExist:
+                    pass
+
             data = {
                 'id': job_description.id,
                 'title': job_description.title,
@@ -375,7 +399,9 @@ class JobDescriptionView(APIView):
                 'file_url': request.build_absolute_uri(job_description.file.url) if job_description.file else None,
                 'is_active': job_description.is_active,
                 'created_at': job_description.created_at,
-                'updated_at': job_description.updated_at
+                'updated_at': job_description.updated_at,
+                'score': score,
+                'application_status': application_status
             }
             return Response(data)
         except JobDescription.DoesNotExist:
